@@ -1,0 +1,32 @@
+services:
+  bot:
+    build: . 
+    container_name: bot
+    volumes:
+      - bot_data:/data
+    # depends_on:
+    #   - db
+    develop:
+      watch:
+        - action: sync+restart
+          path: .
+          target: /bot
+
+
+volumes:
+  bot_data:
+
+#   db: 
+#     image: postgres
+#     container_name: db_bot_container
+#     volumes:
+#       - db_bot_data:/var/lib/postgresql/data
+#     environment: 
+#       POSTGRES_PASSWORD: 1212
+#       POSTGRES_DB: db_bot
+#     ports:
+#           - 5432:5432
+
+
+# volumes:
+#   db_bot_data:
