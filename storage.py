@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, BigInteger, String, DateTime, select, update, func, text, Integer
+from sqlalchemy import Column, BigInteger, String, DateTime, select, update, func, text, Integer, Boolean, ForeignKey
 
 Base = declarative_base()
 
@@ -15,6 +15,30 @@ class User(Base):
     reg_time = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
     status_user = Column(String(64), default='user')
     language = Column(String(2), default='ru')
+    subscription_end = Column(DateTime, nullable=True)
+
+
+class ParsingTask(Base):
+    __tablename__ = 'parsing_tasks'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    creator_id = Column(BigInteger, nullable=False)
+    target_url = Column(String(500), nullable=False)
+    status = Column(String(20), default='new')  # new, processing, completed, error
+    result_file_path = Column(String(500), nullable=True)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
+
+
+
+class SystemAccount(Base):
+    __tablename__ = 'system_accounts'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session = Column(String(255), nullable=False, unique=True)
+    json = Column(String(255), nullable=False, unique=True)
+    is_busy = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class Payment(Base):
@@ -195,3 +219,123 @@ class DB_M:
                 }
                 for p in payments
             ]
+
+
+    # ==================== ParsingTask методы ====================
+    async def create_parsing_task(self, creator_id, target_url):
+        """Создать новую задачу парсинга"""
+        async with self.async_session() as session:
+            new_task = ParsingTask(
+                creator_id=creator_id,
+                target_url=target_url,
+                status='new'
+            )
+            session.add(new_task)
+            await session.commit()
+            await session.refresh(new_task)
+            return new_task.id
+
+    async def get_parsing_task(self, task_id):
+        """Получить задачу парсинга по ID"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(ParsingTask).where(ParsingTask.id == task_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def get_parsing_tasks_by_user(self, user_id):
+        """Получить все задачи парсинга для пользователя"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(ParsingTask)
+                .where(ParsingTask.creator_id == user_id)
+                .order_by(ParsingTask.created_at.desc())
+            )
+            return result.scalars().all()
+
+    async def get_new_parsing_tasks(self):
+        """Получить все новые задачи парсинга"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(ParsingTask)
+                .where(ParsingTask.status == 'new')
+                .order_by(ParsingTask.created_at)
+            )
+            return result.scalars().all()
+
+    async def update_parsing_task_status(self, task_id, status, result_file_path=None):
+        """Обновить статус задачи парсинга и опционально путь к файлу с результатом"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(ParsingTask).where(ParsingTask.id == task_id)
+            )
+            task = result.scalar_one_or_none()
+            
+            if task:
+                task.status = status
+                if result_file_path is not None:
+                    task.result_file_path = result_file_path
+                await session.commit()
+
+    async def update_parsing_task_result(self, task_id, result_file_path):
+        """Обновить путь к файлу с результатом задачи парсинга"""
+        await self.update_parsing_task_status(task_id, 'completed', result_file_path)
+
+
+    # ==================== SystemAccount методы ====================
+    async def get_free_system_account(self):
+        """Получить свободную системную учетную запись (is_busy=False)"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(SystemAccount)
+                .where(SystemAccount.is_busy == False)
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
+
+    async def get_system_account_by_session(self, session_path):
+        """Получить системную учетную запись по пути к сессии"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(SystemAccount)
+                .where(SystemAccount.session == session_path)
+            )
+            return result.scalar_one_or_none()
+
+    async def create_system_account(self, session_path, json_path):
+        """Создать новую системную учетную запись"""
+        async with self.async_session() as session:
+            # Check if account already exists
+            existing = await self.get_system_account_by_session(session_path)
+            if existing:
+                return existing.id
+            
+            new_account = SystemAccount(
+                session=session_path,
+                json=json_path,
+                is_busy=False
+            )
+            session.add(new_account)
+            await session.commit()
+            await session.refresh(new_account)
+            return new_account.id
+
+    async def set_system_account_busy(self, session_path, is_busy):
+        """Установить статус занятости системной учетной записи"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(SystemAccount).where(SystemAccount.session == session_path)
+            )
+            account = result.scalar_one_or_none()
+            
+            if account:
+                account.is_busy = is_busy
+                await session.commit()
+
+    async def get_all_system_accounts(self):
+        """Получить все системные учетные записи"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(SystemAccount).order_by(SystemAccount.id)
+            )
+            return result.scalars().all()

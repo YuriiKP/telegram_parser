@@ -175,3 +175,5 @@ cython_debug/
 .roo
 .vscode
 .continue
+debug.py
+accounts/
