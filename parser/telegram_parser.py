@@ -1,6 +1,7 @@
 import os
 import json
 import io
+import asyncio
 import logging
 from typing import List, Dict, Optional, Union
 
@@ -8,8 +9,13 @@ import openpyxl
 from openpyxl.styles import Font
 
 from telethon import TelegramClient
-from telethon.tl.types import Chat, User, Message
-from telethon.errors import FloodWaitError
+from telethon.tl.types import Chat, User, Message, UserFull, PeerUser
+from telethon.errors import FloodWaitError, UserAlreadyParticipantError
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
+
+from errors import JoinRequestSentError
 
 
 
@@ -20,41 +26,60 @@ class TelegramParser:
     Использует библиотеку opentele для работы с Telegram API.
     """
     
-    def __init__(self, session_path: str, config_path: str):
+    def __init__(self, session_path: str, config_path: str = None):
         """
         Инициализация клиента Telegram.
         
         Args:
             session_path (str): Путь к файлу сессии .session.
-            config_path (str): Путь к JSON файлу с api_id и api_hash.
+            config_path (str, optional): Путь к JSON файлу с api_id и api_hash. Defaults to None.
         """
         self.session_path = session_path
         self.config_path = config_path
         self.client = None
         self.logger = logging.getLogger(__name__)
         
+
+    async def __aenter__(self):
+        await self.connect()
+        return self 
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.client.disconnect()
+        if exc_type:
+            print(f"Завершено с ошибкой: {exc_val}")
+
+
     async def connect(self):
         """
         Подключение к Telegram API.
         """
         try:
-            # Чтение конфигурации из JSON файла
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            api_id = 1
+            api_hash = 'пусто'
             
-            api_id = config.get('api_id')
-            api_hash = config.get('api_hash')
-            
-            if not api_id or not api_hash:
-                raise ValueError("В JSON файле отсутствуют api_id или api_hash")
+            # Если config_path предоставлен, читаем конфигурацию из JSON файла
+            if self.config_path:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                
+                api_id = config.get('app_id')
+                api_hash = config.get('app_hash')
+                
+                if not api_id or not api_hash:
+                    raise ValueError("В JSON файле отсутствуют api_id или api_hash")
             
             self.client = TelegramClient(
                 session=self.session_path,
-                api_id=int(api_id),
-                api_hash=api_hash
+                api_id=int(api_id) if api_id else None,
+                api_hash=api_hash,
+                connection_retries=3,
+                timeout=9, 
+                raise_last_call_error=True 
             )
             await self.client.start()
             self.logger.info("Успешное подключение к Telegram API")
+        
         except FileNotFoundError:
             self.logger.error(f"Файл конфигурации не найден: {self.config_path}")
             raise
@@ -65,6 +90,7 @@ class TelegramParser:
             self.logger.error(f"Ошибка подключения: {e}")
             raise
     
+
     async def disconnect(self):
         """
         Отключение от Telegram API.
@@ -72,83 +98,41 @@ class TelegramParser:
         if self.client:
             await self.client.disconnect()
             self.logger.info("Отключение от Telegram API")
+
     
-    async def _get_chat(self, url: str) -> Optional[Chat]:
-        """
-        Получение объекта чата по URL.
-        
-        Args:
-            url (str): URL чата или канала.
-        
-        Returns:
-            Optional[Chat]: Объект чата или None в случае ошибки.
-        """
-        try:
-            chat = await self.client.get_entity(url)
-            return chat
-        except FloodWaitError as e:
-            self.logger.error(f"FloodWait ошибка: {e}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Ошибка получения чата: {e}")
-            return None
-    
-    async def parse_users_chat(self, url: str, limit: int = 10000) -> List[Dict]:
+    async def parse_users_chat(self, chat: str, limit: int = 10000) -> List[Dict]:
         """
         Парсинг участников чата (только если участники чата открыты).
         
         Args:
-            url (str): URL чата.
+            chat (str): ссылка или id чата.
             limit (int): Максимальное количество участников для парсинга.
         
         Returns:
             List[Dict]: Список участников с их данными.
         """
-        chat = await self._get_chat(url)
-        if not chat:
-            return []
         
         users_data = []
         try:
-            async for participant in self.client.iter_participants(chat, limit=limit):
-                user_data = await self._extract_user_data(participant)
+            async for user in self.client.iter_participants(chat, limit=limit):
+                if user.bot: 
+                    continue
+
+                # Получаем полную информацию о пользователе, чтобы достать 'о себе'
+                full_user = await self.client(GetFullUserRequest(user.id))
+                
+                user_data = await self._extract_user_data(full_user)
                 users_data.append(user_data)
+            print(users_data)
+
+        except ValueError as e:
+            # Вступаем в чат, немного ждем и парсим
+            self.logger.error(f"ValueError ошибка, пробую вступить в чат и повторить попытку: {e}")
+            await self._join_chat(chat)
+            await asyncio.sleep(10)
+            return await self.parse_users_chat(chat)
         except FloodWaitError as e:
-            self.logger.error(f"FloodWait ошибка: {e}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Ошибка парсинга участников чата: {e}")
-            raise
-        
-        return users_data
-    
-    async def parse_users_from_history(self, url: str, limit: int = 10000) -> List[Dict]:
-        """
-        Парсинг участников из истории сообщений чата.
-        
-        Args:
-            url (str): URL чата.
-            limit (int): Максимальное количество сообщений для анализа.
-        
-        Returns:
-            List[Dict]: Список участников с их данными.
-        """
-        chat = await self._get_chat(url)
-        if not chat:
-            return []
-        
-        users_data = []
-        seen_users = set()
-        try:
-            async for message in self.client.iter_messages(chat, limit=limit):
-                if message.from_id and isinstance(message.from_id, User):
-                    user_id = message.from_id.id
-                    if user_id not in seen_users:
-                        seen_users.add(user_id)
-                        user_data = await self._extract_user_data(message.from_id)
-                        users_data.append(user_data)
-        except FloodWaitError as e:
-            self.logger.error(f"FloodWait ошибка: {e}")
+            self.logger.error(f"FloodWait ошибка: {e}, {e.seconds}")
             raise
         except Exception as e:
             self.logger.error(f"Ошибка парсинга участников из истории: {e}")
@@ -156,59 +140,135 @@ class TelegramParser:
         
         return users_data
     
-    async def parse_channel_commenters(self, url: str, limit: int = 10000) -> List[Dict]:
+
+    async def parse_users_from_history(self, chat: str, limit: int = 10000) -> List[Dict]:
+        """
+        Парсинг участников из истории сообщений чата.
+        
+        Args:
+            chat (str): ссылка или id чата.
+            limit (int): Максимальное количество сообщений для анализа.
+        
+        Returns:
+            List[Dict]: Список участников с их данными.
+        """
+        
+        users_data = []
+        seen_users = set()
+        try:
+            async for comment in self.client.iter_messages(entity=chat, limit=limit):
+                if isinstance(comment.from_id, PeerUser) and comment.from_id.user_id not in seen_users:
+                    seen_users.add(comment.from_id.user_id)
+
+                    # Получаем полную информацию о пользователе, чтобы достать 'о себе'
+                    full_user = await self.client(GetFullUserRequest(comment.from_id))
+                    if full_user.users[0].bot:
+                        continue
+
+                    user_data = await self._extract_user_data(full_user)
+                    users_data.append(user_data)
+        
+        except ValueError as e:
+            # Вступаем в чат, немного ждем и парсим
+            self.logger.error(f"ValueError ошибка, пробую вступить в чат и повторить попытку: {e}")
+            await self._join_chat(chat)
+            await asyncio.sleep(10)
+            return await self.parse_users_from_history(chat)
+        except FloodWaitError as e:
+            self.logger.error(f"FloodWait ошибка: {e}, {e.seconds}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Ошибка парсинга участников из истории чата: {e}")
+            raise
+        
+        return users_data
+    
+
+    async def parse_channel_commenters(self, chat: str, limit: int = 100) -> List[Dict]:
         """
         Парсинг комментаторов канала (если комментарии включены).
         
         Args:
-            url (str): URL канала.
+            chat (str): ссылка на канал.
             limit (int): Максимальное количество комментариев для анализа.
         
         Returns:
             List[Dict]: Список комментаторов с их данными.
         """
-        chat = await self._get_chat(url)
-        if not chat:
-            return []
-        
-        users_data = []
-        seen_users = set()
+        # Получаем полную информацию о канале
         try:
-            async for message in self.client.iter_messages(chat, limit=limit):
-                if message.is_reply and message.from_id and isinstance(message.from_id, User):
-                    user_id = message.from_id.id
-                    if user_id not in seen_users:
-                        seen_users.add(user_id)
-                        user_data = await self._extract_user_data(message.from_id)
-                        users_data.append(user_data)
-        except FloodWaitError as e:
-            self.logger.error(f"FloodWait ошибка: {e}")
-            raise
+            full_channel = await self.client(GetFullChannelRequest(chat))
+        except ValueError as e:
+            # Вступаем в чат, немного ждем и парсим
+            self.logger.error(f"ValueError ошибка, пробую вступить в чат и повторить попытку: {e}")
+            # Если нужно ждать одобрения админом
+            await self._join_chat(chat)            
+            await asyncio.sleep(10)
+        
         except Exception as e:
-            self.logger.error(f"Ошибка парсинга комментаторов канала: {e}")
+            self.logger.error(f"Ошибка получения информации о канале: {e}")
             raise
         
-        return users_data
+        # id привязанного чата
+        chat = full_channel.full_chat.linked_chat_id
+        if chat is None:
+            return []
+        return await self.parse_users_from_history(chat, limit)
     
-    async def _extract_user_data(self, user: User) -> Dict:
+
+    async def _extract_user_data(self, full_user_result) -> dict:
         """
-        Извлечение данных пользователя.
+        Извлечение данных пользователя из результата GetFullUserRequest.
         
-        Args:
-            user (User): Объект пользователя.
-        
-        Returns:
-            Dict: Словарь с данными пользователя.
         """
+        # Базовый объект пользователя (имя, юзернейм, телефон)
+        user_obj = full_user_result.users[0]
+        
+        # Объект расширенной информации (about)
+        full_info = full_user_result.full_user
+
         user_data = {
-            "id": user.id,
-            "username": user.username if user.username else "",
-            "first_name": user.first_name if user.first_name else "",
-            "last_name": user.last_name if user.last_name else "",
-            "phone": user.phone if user.phone else ""
+            "id": user_obj.id,
+            "username": user_obj.username or "",
+            "first_name": user_obj.first_name or "",
+            "last_name": user_obj.last_name or "",
+            "phone": user_obj.phone or "",
+            "premium": str(user_obj.premium),
+            "lang_code": user_obj.lang_code or "",
+            "bio": full_info.about or ""
         }
         return user_data
     
+
+    async def _join_chat(self, link: str) -> None:
+        """
+        Вступление в приватный чат по пригласительной ссылке
+
+        Args:
+            link str: Пригласительная ссылка
+        
+        """
+        # Извлекаем хэш из ссылки
+        invite_hash = link.split('/')[-1].replace('+', '')
+
+        try:
+            await self.client(ImportChatInviteRequest(invite_hash))
+            print(f"Успешно вступили в чат по ссылке: {link}")
+        
+        except UserAlreadyParticipantError:
+            print("Вы уже состоите в этом чате.")
+        except FloodWaitError as e:
+            print(f"Слишком много попыток! Нужно подождать {e.seconds} секунд.")
+        except Exception as e:
+            # Если нужно ждать одобрения
+            if "successfully requested to join" in e:
+                self.logger.warning("Отправлена заявка на вступление.")
+                raise JoinRequestSentError("Нужно ждать одобрения админом")
+            
+            self.logger.error(f"Критическая ошибка вступления: {e}")
+            raise
+    
+
     def get_excel_bytes(self, users_data: List[Dict]) -> io.BytesIO:
         """
         Получение данных участников в виде Excel файла в памяти.
@@ -245,6 +305,7 @@ class TelegramParser:
         self.logger.info("Excel данные подготовлены в памяти")
         return excel_bytes
     
+
     def get_txt_bytes(self, users_data: List[Dict]) -> io.BytesIO:
         """
         Получение данных участников в виде .txt файла в памяти.
