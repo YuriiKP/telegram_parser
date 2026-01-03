@@ -1,6 +1,10 @@
+import os
+from enum import Enum as PyEnum
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, BigInteger, String, DateTime, select, update, func, text, Integer, Boolean, ForeignKey
+from sqlalchemy import Column, BigInteger, String, DateTime, select, update, func, text, Integer, Boolean, Enum as SQLEnum
+
 
 Base = declarative_base()
 
@@ -18,14 +22,21 @@ class User(Base):
     subscription_end = Column(DateTime, nullable=True)
 
 
+
+class ParsingTaskStatus(PyEnum):
+    NEW = 'new'
+    PROCESSING = 'processing'
+    COMPLETED = 'completed'
+    ERROR = 'error'
+
+
 class ParsingTask(Base):
     __tablename__ = 'parsing_tasks'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     creator_id = Column(BigInteger, nullable=False)
     target_url = Column(String(500), nullable=False)
-    status = Column(String(20), default='new')  # new, processing, completed, error
-    result_file_path = Column(String(500), nullable=True)
+    status = Column(SQLEnum(ParsingTaskStatus), default=ParsingTaskStatus.NEW, nullable=False)  # new, processing, completed, error
     created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
     updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
 
@@ -228,7 +239,7 @@ class DB_M:
             new_task = ParsingTask(
                 creator_id=creator_id,
                 target_url=target_url,
-                status='new'
+                status=ParsingTaskStatus.NEW
             )
             session.add(new_task)
             await session.commit()
@@ -258,12 +269,12 @@ class DB_M:
         async with self.async_session() as session:
             result = await session.execute(
                 select(ParsingTask)
-                .where(ParsingTask.status == 'new')
+                .where(ParsingTask.status == ParsingTaskStatus.NEW)
                 .order_by(ParsingTask.created_at)
             )
             return result.scalars().all()
 
-    async def update_parsing_task_status(self, task_id, status, result_file_path=None):
+    async def update_parsing_task_status(self, task_id, status):
         """Обновить статус задачи парсинга и опционально путь к файлу с результатом"""
         async with self.async_session() as session:
             result = await session.execute(
@@ -273,13 +284,7 @@ class DB_M:
             
             if task:
                 task.status = status
-                if result_file_path is not None:
-                    task.result_file_path = result_file_path
                 await session.commit()
-
-    async def update_parsing_task_result(self, task_id, result_file_path):
-        """Обновить путь к файлу с результатом задачи парсинга"""
-        await self.update_parsing_task_status(task_id, 'completed', result_file_path)
 
 
     # ==================== SystemAccount методы ====================
@@ -303,9 +308,9 @@ class DB_M:
             return result.scalar_one_or_none()
 
     async def create_system_account(self, session_path, json_path):
-        """Создать новую системную учетную запись"""
+        """Добавить новый аккаунт в БД"""
         async with self.async_session() as session:
-            # Check if account already exists
+            # Проверяем, если аккаунт уже создан
             existing = await self.get_system_account_by_session(session_path)
             if existing:
                 return existing.id
@@ -339,3 +344,39 @@ class DB_M:
                 select(SystemAccount).order_by(SystemAccount.id)
             )
             return result.scalars().all()
+
+    async def scan_accounts(self, accounts_dir='accounts/'):
+        """Сканировать папку accounts/ на наличие папок аккаунтов и сохранить пути в БД"""
+        accounts_added = []
+        if not os.path.exists(accounts_dir):
+            return accounts_added
+        
+        for item in os.listdir(accounts_dir):
+            item_path = os.path.join(accounts_dir, item)
+            if os.path.isdir(item_path) and item.startswith('+'):
+                session_file = None
+                json_file = None
+                for file in os.listdir(item_path):
+                    file_path = os.path.join(item_path, file)
+                    if file.endswith('.session'):
+                        session_file = file_path
+                    elif file.endswith('.json'):
+                        json_file = file_path
+                if session_file and json_file:
+                    account_id = await self.create_system_account(session_file, json_file)
+                    accounts_added.append(account_id)
+        return accounts_added
+
+    async def get_free_account(self):
+        """Получить свободный аккаунт и пометить его как занятый"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(SystemAccount)
+                .where(SystemAccount.is_busy == False)
+                .limit(1)
+            )
+            account = result.scalar_one_or_none()
+            if account:
+                account.is_busy = True
+                await session.commit()
+            return account
