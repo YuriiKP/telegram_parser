@@ -9,3 +9,8 @@ class State_Ban_Admin(StatesGroup):
 class State_Mailing(StatesGroup):
     msg = State()
     add_button = State()
+
+
+class State_Parsing(StatesGroup):
+    """Состояние для процесса парсинга"""
+    waiting_for_link = State()

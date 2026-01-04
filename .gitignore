@@ -178,3 +178,4 @@ cython_debug/
 debug.py
 accounts/
 .github
+data/

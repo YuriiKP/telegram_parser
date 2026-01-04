@@ -65,6 +65,11 @@ class TelegramParser:
                 
                 api_id = config.get('app_id')
                 api_hash = config.get('app_hash')
+                device_model = config.get('device_model', None)
+                system_version = config.get('system_version', None)
+                lang_code = config.get('lang_code', None)
+                system_lang_code = config.get('system_lang_code', None)
+                app_version = config.get('app_version', None)
                 
                 if not api_id or not api_hash:
                     raise ValueError("В JSON файле отсутствуют api_id или api_hash")
@@ -73,9 +78,16 @@ class TelegramParser:
                 session=self.session_path,
                 api_id=int(api_id) if api_id else None,
                 api_hash=api_hash,
+
+                device_model=device_model,
+                system_version=system_version,
+                lang_code=lang_code,
+                system_lang_code=system_lang_code,
+                app_version=app_version,
+
                 connection_retries=3,
                 timeout=9, 
-                raise_last_call_error=True 
+                raise_last_call_error=True
             )
             await self.client.start()
             self.logger.info("Успешное подключение к Telegram API")

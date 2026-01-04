@@ -7,14 +7,16 @@ from keyboards.text import *
 # Админ клавиатуры 
 admin_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=btn_admins), KeyboardButton(text=btn_about_users_bot)]
+        [KeyboardButton(text=btn_admins), KeyboardButton(text=btn_about_users_bot)],
+        [KeyboardButton(text=btn_sync_accounts)]
     ],
     resize_keyboard=True
 )
 
 main_admin_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=btn_admins), KeyboardButton(text=btn_about_users_bot)]
+        [KeyboardButton(text=btn_admins), KeyboardButton(text=btn_about_users_bot)],
+        [KeyboardButton(text=btn_sync_accounts)]
     ],
     resize_keyboard=True
 )
@@ -25,6 +27,8 @@ main_admin_menu = ReplyKeyboardMarkup(
 def user_main_menu():
     builder = InlineKeyboardBuilder()
     
+    builder.button(text=btn_parse, callback_data='btn_parse')
+    builder.button(text=btn_status, callback_data='btn_status')
     builder.button(text=btn_buy, callback_data='btn_buy')
     builder.button(text=btn_help, callback_data='btn_help')
 
