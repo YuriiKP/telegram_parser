@@ -1,10 +1,11 @@
 import re
 import logging
 
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, LinkPreviewOptions
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram import F
+from aiogram.exceptions import TelegramBadRequest
 
 from loader import dp, bot, db_manage
 from keyboards import user_main_menu
@@ -99,7 +100,8 @@ async def process_parsing_link(message: Message, state: FSMContext):
             f"<b>Ссылка:</b> {link}\n\n"
             f"Статус можно проверить кнопкой <b>\"Статус задач\"</b> или командой /status\n"
             f"Ожидайте уведомления о завершении.",
-            reply_markup=user_main_menu()
+            reply_markup=user_main_menu(),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
     except Exception as e:
@@ -169,7 +171,15 @@ async def process_show_status(message: Message):
     if len(tasks) > 5:
         response += f"\n... и еще {len(tasks) - 5} задач. Показаны последние 5."
     
-    await message.edit_text(
-        text=response,
-        reply_markup=user_main_menu()
-    )
+    try:
+        await message.edit_text(
+            text=response,
+            reply_markup=user_main_menu(),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+    except TelegramBadRequest:
+        await message.answer(
+            text=response,
+            reply_markup=user_main_menu(),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )

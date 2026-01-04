@@ -16,6 +16,7 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
 
 from errors import JoinRequestSentError
+from storage import SystemAccountStatus
 
 
 
@@ -26,26 +27,31 @@ class TelegramParser:
     Использует библиотеку opentele для работы с Telegram API.
     """
     
-    def __init__(self, session_path: str, config_path: str = None):
+    def __init__(self, session_path: str, config_path: str = None, db_manager = None, account_session_path: str = None):
         """
         Инициализация клиента Telegram.
         
         Args:
             session_path (str): Путь к файлу сессии .session.
             config_path (str, optional): Путь к JSON файлу с api_id и api_hash. Defaults to None.
+            db_manager: Менеджер БД для обновления статуса аккаунта при ошибках.
+            account_session_path (str): Путь к сессии аккаунта в БД (для идентификации).
         """
         self.session_path = session_path
         self.config_path = config_path
+        self.db_manager = db_manager
+        self.account_session_path = account_session_path or session_path
         self.client = None
         self.logger = logging.getLogger(__name__)
         
 
     async def __aenter__(self):
         await self.connect()
-        return self 
+        return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.client.disconnect()
+        if self.client:
+            await self.client.disconnect()
         if exc_type:
             print(f"Завершено с ошибкой: {exc_val}")
 
@@ -53,6 +59,7 @@ class TelegramParser:
     async def connect(self):
         """
         Подключение к Telegram API.
+        При ошибке авторизации (требуется номер телефона) помечает аккаунт как AUTH_REQUIRED.
         """
         try:
             api_id = 1
@@ -65,15 +72,16 @@ class TelegramParser:
                 
                 api_id = config.get('app_id')
                 api_hash = config.get('app_hash')
-                device_model = config.get('device_model', None)
-                system_version = config.get('system_version', None)
+                device_model = config.get('device_model', None) or config.get('device', None)
+                system_version = config.get('system_version', None) or config.get('sdk', None)
                 lang_code = config.get('lang_code', None)
-                system_lang_code = config.get('system_lang_code', None)
+                system_lang_code = config.get('system_lang_code', None) or config.get('system_lang_pack', None) or 'en-US'
                 app_version = config.get('app_version', None)
-                
+
                 if not api_id or not api_hash:
                     raise ValueError("В JSON файле отсутствуют api_id или api_hash")
             
+
             self.client = TelegramClient(
                 session=self.session_path,
                 api_id=int(api_id) if api_id else None,
@@ -86,21 +94,61 @@ class TelegramParser:
                 app_version=app_version,
 
                 connection_retries=3,
-                timeout=9, 
+                timeout=9,
                 raise_last_call_error=True
             )
-            await self.client.start()
+            
+            # Подключаемся без авторизации (не вызываем start())
+            await self.client.connect()
+            
+            # Проверяем, авторизован ли пользователь
+            if not await self.client.is_user_authorized():
+                self.logger.error(f"Аккаунт не авторизован: {self.account_session_path}")
+                if self.db_manager:
+                    await self.db_manager.set_system_account_status(
+                        self.account_session_path,
+                        SystemAccountStatus.AUTH_REQUIRED
+                    )
+                raise Exception(f"Аккаунт не авторизован: {self.account_session_path}")
+            
             self.logger.info("Успешное подключение к Telegram API")
         
         except FileNotFoundError:
             self.logger.error(f"Файл конфигурации не найден: {self.config_path}")
             raise
+        
         except json.JSONDecodeError:
             self.logger.error(f"Ошибка чтения JSON файла: {self.config_path}")
             raise
-        except Exception as e:
-            self.logger.error(f"Ошибка подключения: {e}")
+        
+        except FloodWaitError as e:
+            self.logger.error(f"FloodWait ошибка для аккаунта {self.account_session_path}: {e}")
+            if self.db_manager:
+                await self.db_manager.set_system_account_status(
+                    self.account_session_path,
+                    SystemAccountStatus.FLOOD_WAIT
+                )
             raise
+        
+        except Exception as e:
+            self.logger.error(f"Ошибка подключения для аккаунта {self.account_session_path}: {e}")
+            # Проверяем, является ли ошибка связанной с авторизацией
+            error_str = str(e).lower()
+            
+            if any(keyword in error_str for keyword in ['phone', 'auth', 'sign in', 'login', 'session', 'not authorized']):
+                if self.db_manager:
+                    await self.db_manager.set_system_account_status(
+                        self.account_session_path,
+                        SystemAccountStatus.AUTH_REQUIRED
+                    )
+                raise
+            else:
+                if self.db_manager:
+                    await self.db_manager.set_system_account_status(
+                        self.account_session_path,
+                        SystemAccountStatus.BANNED
+                    )
+                raise
     
 
     async def disconnect(self):

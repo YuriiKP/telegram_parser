@@ -30,6 +30,16 @@ class ParsingTaskStatus(PyEnum):
     ERROR = 'error'
 
 
+class SystemAccountStatus(PyEnum):
+    """Статусы системных аккаунтов"""
+    OK = 'ok'                     # аккаунт работает нормально и свободен
+    IS_BUSY = 'is_busy'           # аккаунт занят (выполняет задачу)
+    AUTH_REQUIRED = 'auth_required'  # требуется авторизация (нужен номер телефона)
+    BANNED = 'banned'             # аккаунт забанен
+    FLOOD_WAIT = 'flood_wait'     # временная блокировка из-за флуда
+    SESSION_EXPIRED = 'session_expired'  # сессия устарела
+
+
 class ParsingTask(Base):
     __tablename__ = 'parsing_tasks'
     
@@ -48,7 +58,7 @@ class SystemAccount(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     session = Column(String(255), nullable=False, unique=True)
     json = Column(String(255), nullable=False, unique=True)
-    is_busy = Column(Boolean, default=False)
+    status = Column(SQLEnum(SystemAccountStatus), default=SystemAccountStatus.OK, nullable=False)
     created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
@@ -289,11 +299,11 @@ class DB_M:
 
     # ==================== SystemAccount методы ====================
     async def get_free_system_account(self):
-        """Получить свободную системную учетную запись (is_busy=False)"""
+        """Получить свободную системную учетную запись (status=OK)"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(SystemAccount)
-                .where(SystemAccount.is_busy == False)
+                .where(SystemAccount.status == SystemAccountStatus.OK)
                 .limit(1)
             )
             return result.scalar_one_or_none()
@@ -318,15 +328,15 @@ class DB_M:
             new_account = SystemAccount(
                 session=session_path,
                 json=json_path,
-                is_busy=False
+                status=SystemAccountStatus.OK
             )
             session.add(new_account)
             await session.commit()
             await session.refresh(new_account)
             return new_account.id
 
-    async def set_system_account_busy(self, session_path, is_busy):
-        """Установить статус занятости системной учетной записи"""
+    async def set_system_account_status(self, session_path, status):
+        """Установить статус системной учетной записи"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(SystemAccount).where(SystemAccount.session == session_path)
@@ -334,7 +344,7 @@ class DB_M:
             account = result.scalar_one_or_none()
             
             if account:
-                account.is_busy = is_busy
+                account.status = status
                 await session.commit()
 
     async def get_all_system_accounts(self):
@@ -353,7 +363,7 @@ class DB_M:
         
         for item in os.listdir(accounts_dir):
             item_path = os.path.join(accounts_dir, item)
-            if os.path.isdir(item_path) and item.startswith('+'):
+            if os.path.isdir(item_path):
                 session_file = None
                 json_file = None
                 for file in os.listdir(item_path):
@@ -368,15 +378,15 @@ class DB_M:
         return accounts_added
 
     async def get_free_account(self):
-        """Получить свободный аккаунт и пометить его как занятый"""
+        """Получить свободный аккаунт (status=OK) и пометить его как занятый (IS_BUSY)"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(SystemAccount)
-                .where(SystemAccount.is_busy == False)
+                .where(SystemAccount.status == SystemAccountStatus.OK)
                 .limit(1)
             )
             account = result.scalar_one_or_none()
             if account:
-                account.is_busy = True
+                account.status = SystemAccountStatus.IS_BUSY
                 await session.commit()
             return account
