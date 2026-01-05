@@ -16,7 +16,7 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
 
 from errors import JoinRequestSentError
-from storage import SystemAccountStatus
+from storage import SystemAccountStatus, ParsingTaskStatus
 
 
 
@@ -27,7 +27,14 @@ class TelegramParser:
     Использует библиотеку opentele для работы с Telegram API.
     """
     
-    def __init__(self, session_path: str, config_path: str = None, db_manager = None, account_session_path: str = None):
+    def __init__(
+        self, 
+        session_path: str, 
+        config_path: str = None, 
+        db_manager = None, 
+        account_session_path: str = None, 
+        task_id: int = None
+    ):
         """
         Инициализация клиента Telegram.
         
@@ -36,11 +43,13 @@ class TelegramParser:
             config_path (str, optional): Путь к JSON файлу с api_id и api_hash. Defaults to None.
             db_manager: Менеджер БД для обновления статуса аккаунта при ошибках.
             account_session_path (str): Путь к сессии аккаунта в БД (для идентификации).
+            task_id (int): ID задачи парсинга для проверки отмены.
         """
         self.session_path = session_path
         self.config_path = config_path
         self.db_manager = db_manager
         self.account_session_path = account_session_path or session_path
+        self.task_id = task_id
         self.client = None
         self.logger = logging.getLogger(__name__)
         
@@ -160,6 +169,15 @@ class TelegramParser:
             self.logger.info("Отключение от Telegram API")
 
     
+    async def check_cancelled(self):
+        """Проверить, отменена ли задача (если task_id задан)"""
+        if self.task_id is None or self.db_manager is None:
+            return False
+        task = await self.db_manager.get_parsing_task(self.task_id)
+        if task and task.status == ParsingTaskStatus.CANCELLED:
+            raise asyncio.CancelledError(f"Task {self.task_id} was cancelled")
+
+
     async def parse_users_chat(self, chat: str, limit: int = 10000) -> List[Dict]:
         """
         Парсинг участников чата (только если участники чата открыты).
@@ -174,9 +192,15 @@ class TelegramParser:
         
         users_data = []
         try:
+            count = 0
             async for user in self.client.iter_participants(chat, limit=limit):
-                if user.bot: 
+                if user.bot:
                     continue
+
+                # Проверяем отмену каждые 10 участников
+                count += 1
+                if count % 10 == 0:
+                    await self.check_cancelled()
 
                 # Получаем полную информацию о пользователе, чтобы достать 'о себе'
                 full_user = await self.client(GetFullUserRequest(user.id))
@@ -185,6 +209,9 @@ class TelegramParser:
                 users_data.append(user_data)
             print(users_data)
 
+        except asyncio.CancelledError:
+            self.logger.info(f"Парсинг задачи {self.task_id} отменен")
+            raise
         except ValueError as e:
             # Вступаем в чат, немного ждем и парсим
             self.logger.error(f"ValueError ошибка, пробую вступить в чат и повторить попытку: {e}")
@@ -216,7 +243,13 @@ class TelegramParser:
         users_data = []
         seen_users = set()
         try:
+            count = 0
             async for comment in self.client.iter_messages(entity=chat, limit=limit):
+                # Проверяем отмену каждые 10 сообщений
+                count += 1
+                if count % 10 == 0:
+                    await self.check_cancelled()
+      
                 if isinstance(comment.from_id, PeerUser) and comment.from_id.user_id not in seen_users:
                     seen_users.add(comment.from_id.user_id)
 
@@ -227,7 +260,12 @@ class TelegramParser:
 
                     user_data = await self._extract_user_data(full_user)
                     users_data.append(user_data)
+
+
         
+        except asyncio.CancelledError:
+            self.logger.info(f"Парсинг задачи {self.task_id} отменен")
+            raise
         except ValueError as e:
             # Вступаем в чат, немного ждем и парсим
             self.logger.error(f"ValueError ошибка, пробую вступить в чат и повторить попытку: {e}")

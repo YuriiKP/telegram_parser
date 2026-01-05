@@ -17,6 +17,7 @@ btn_buy_one_month = '🟢 1 месяц - 1⭐️ | 2₽'
 btn_help = '🆘 Помощь'
 btn_parse = '🔍 Парсинг'
 btn_status = '📊 Статус задач'
+btn_cancel_task = '❌ Отменить задачу'
 
 
 # Текст юзеров

@@ -28,6 +28,7 @@ class ParsingTaskStatus(PyEnum):
     PROCESSING = 'processing'
     COMPLETED = 'completed'
     ERROR = 'error'
+    CANCELLED = 'cancelled'
 
 
 class SystemAccountStatus(PyEnum):
@@ -274,6 +275,19 @@ class DB_M:
             )
             return result.scalars().all()
 
+    async def get_active_parsing_tasks_by_user(self, user_id):
+        """Получить активные задачи парсинга для пользователя (NEW или PROCESSING)"""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(ParsingTask)
+                .where(
+                    (ParsingTask.creator_id == user_id) &
+                    (ParsingTask.status.in_([ParsingTaskStatus.NEW, ParsingTaskStatus.PROCESSING]))
+                )
+                .order_by(ParsingTask.created_at.desc())
+            )
+            return result.scalars().all()
+
     async def get_new_parsing_tasks(self):
         """Получить все новые задачи парсинга"""
         async with self.async_session() as session:
@@ -295,6 +309,31 @@ class DB_M:
             if task:
                 task.status = status
                 await session.commit()
+
+    async def cancel_parsing_task(self, task_id, user_id=None):
+        """Отменить задачу парсинга (только если она принадлежит пользователю и активна)"""
+        async with self.async_session() as session:
+            # Получаем задачу
+            result = await session.execute(
+                select(ParsingTask).where(ParsingTask.id == task_id)
+            )
+            task = result.scalar_one_or_none()
+            
+            if not task:
+                return False, "Задача не найдена"
+            
+            # Проверяем принадлежность пользователю, если указан user_id
+            if user_id is not None and task.creator_id != user_id:
+                return False, "Задача не принадлежит вам"
+            
+            # Проверяем, можно ли отменить (только NEW или PROCESSING)
+            if task.status not in (ParsingTaskStatus.NEW, ParsingTaskStatus.PROCESSING):
+                return False, f"Задача уже завершена (статус: {task.status.value})"
+            
+            # Меняем статус на CANCELLED
+            task.status = ParsingTaskStatus.CANCELLED
+            await session.commit()
+            return True, "Задача успешно отменена"
 
 
     # ==================== SystemAccount методы ====================

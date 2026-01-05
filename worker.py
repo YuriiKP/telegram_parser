@@ -25,12 +25,13 @@ async def process_task(task: ParsingTask):
     try:
         logger.info(f"Начинаем обработку задачи {task.id} с аккаунтом {account.session}")
 
-        # Инициализируем парсер с передачей db_manager для обновления статуса ошибок
+        # Инициализируем парсер с передачей db_manager для обновления статуса ошибок и task_id для проверки отмены
         async with TelegramParser(
             session_path=account.session,
             config_path=account.json,
             db_manager=db_manage,
-            account_session_path=account.session
+            account_session_path=account.session,
+            task_id=task.id
         ) as parser:
             # Парсим участников чата
             users_data = await parser.parse_channel_commenters(task.target_url)
@@ -92,6 +93,14 @@ async def process_task(task: ParsingTask):
             await db_manage.update_parsing_task_status(task.id, ParsingTaskStatus.COMPLETED)
             logger.info(f"Задача {task.id} завершена успешно. Кол-во собранных юзеров: {len(users_data)}")
 
+    except asyncio.CancelledError:
+        logger.info(f"Задача {task.id} была отменена пользователем")
+        # Статус уже CANCELLED, ничего не делаем
+        # Отправляем уведомление пользователю
+        await bot.send_message(
+            chat_id=task.creator_id,
+            text=f"🛑 Задача парсинга #{task.id} была отменена."
+        )
     except Exception as e:
         logger.error(f"Ошибка при обработке задачи {task.id}: {e}")
         # Обновляем статус как error

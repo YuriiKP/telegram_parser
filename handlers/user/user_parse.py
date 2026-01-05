@@ -8,34 +8,14 @@ from aiogram import F
 from aiogram.exceptions import TelegramBadRequest
 
 from loader import dp, bot, db_manage
-from keyboards import user_main_menu
+from keyboards import *
 from storage import ParsingTaskStatus
 from utils.states import State_Parsing
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 
 logger = logging.getLogger(__name__)
-
-@dp.message(Command('cancel'))
-async def cancel_command(message: Message, state: FSMContext):
-    """Обработка команды /cancel - отмена текущего действия"""
-    current_state = await state.get_state()
-    
-    if current_state is None:
-        await message.answer("Нет активных действий для отмены.")
-        return
-    
-    # Проверяем, находится ли пользователь в состоянии парсинга
-    if current_state == State_Parsing.waiting_for_link:
-        await state.clear()
-        await message.answer(
-            "❌ Парсинг отменен.\n"
-            "Вы можете начать заново, нажав кнопку 'Парсинг'.",
-            reply_markup=user_main_menu()
-        )
-    else:
-        await state.clear()
-        await message.answer("Действие отменено.")
 
 
 # Обработчики инлайн кнопок
@@ -47,14 +27,16 @@ async def inline_parse_command(query: CallbackQuery, state: FSMContext):
     # Устанавливаем состояние ожидания ссылки
     await state.set_state(State_Parsing.waiting_for_link)
     
+
+    # Поменять меню
+    #################################################################################
     await query.message.edit_text(
         "🔍 <b>Парсинг чата/канала</b>\n\n"
         "Отправьте ссылку на чат или канал в любом формате:\n"
         "• https://t.me/chat_name\n"
         "• @chat_name\n"
         "• t.me/chat_name\n\n"
-        "<i>Требуется активная подписка.</i>\n\n"
-        "<b>Для отмены отправьте /cancel</b>",
+        "<i>Требуется активная подписка.</i>\n\n",
         reply_markup=user_main_menu()
     )
 
@@ -87,6 +69,28 @@ async def process_parsing_link(message: Message, state: FSMContext):
         )
         return
     
+    # Проверяем, есть ли у пользователя активные задачи (NEW или PROCESSING)
+    active_tasks = await db_manage.get_active_parsing_tasks_by_user(message.from_user.id)
+    if active_tasks:
+        # Формируем сообщение с информацией об активных задачах
+        task_info = "\n".join(
+            f"• Задача #{task.id}: {task.status.value} (создана {task.created_at.strftime('%d.%m.%Y %H:%M')})"
+            for task in active_tasks[:3]  # Показываем до 3 задач
+        )
+        if len(active_tasks) > 3:
+            task_info += f"\n• ... и ещё {len(active_tasks) - 3} задач"
+        
+        await message.answer(
+            f"⏳ <b>У вас уже есть активная задача парсинга!</b>\n\n"
+            f"Вы можете запустить только одну задачу одновременно.\n"
+            f"Дождитесь завершения текущей задачи или отмените её.\n\n"
+            f"<b>Активные задачи:</b>\n{task_info}\n\n"
+            f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
+            reply_markup=user_main_menu(),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        return
+    
     # Создаем задачу парсинга
     try:
         task_id = await db_manage.create_parsing_task(
@@ -99,7 +103,7 @@ async def process_parsing_link(message: Message, state: FSMContext):
             f"<b>ID задачи:</b> {task_id}\n"
             f"<b>Ссылка:</b> {link}\n\n"
             f"Статус можно проверить кнопкой <b>\"Статус задач\"</b> или командой /status\n"
-            f"Ожидайте уведомления о завершении.",
+            f"Ожидайте уведомления о завершения.",
             reply_markup=user_main_menu(),
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
@@ -112,6 +116,51 @@ async def process_parsing_link(message: Message, state: FSMContext):
         )
         logger.error(f"Ошибка при создании задачи: {str(e)}")
 
+
+@dp.callback_query(F.data == 'btn_cancel_task')
+async def inline_cancel_task_command(query: CallbackQuery, state: FSMContext):
+    """Обработка нажатия кнопки 'Отменить задачу'"""
+    await query.answer()
+    
+    # Получаем активные задачи пользователя
+    active_tasks = await db_manage.get_active_parsing_tasks_by_user(query.from_user.id)
+    if not active_tasks:
+        await query.message.edit_text(
+            "📭 <b>Нет активных задач для отмены.</b>\n\n"
+            "У вас нет запущенных задач парсинга (NEW или PROCESSING).",
+            reply_markup=user_main_menu()
+        )
+        return
+    
+    # Отменяем все активные задачи
+    cancelled_count = 0
+    errors = []
+    for task in active_tasks:
+        success, msg = await db_manage.cancel_parsing_task(task.id, user_id=query.from_user.id)
+        if success:
+            cancelled_count += 1
+        else:
+            errors.append(f"Задача #{task.id}: {msg}")
+    
+    # Формируем ответ
+    if cancelled_count == 0:
+        response = (
+            "❌ <b>Не удалось отменить задачи:</b>\n"
+            + "\n".join(errors)
+        )
+    else:
+        response = (
+            f"✅ <b>Отменено задач:</b> {cancelled_count}\n"
+            f"• Все активные задачи переведены в статус CANCELLED.\n\n"
+        )
+        if errors:
+            response += "<b>Ошибки при отмене:</b>\n" + "\n".join(errors) + "\n\n"
+        response += "Теперь вы можете запустить новую задачу парсинга."
+    
+    await query.message.edit_text(
+        response,
+        reply_markup=user_main_menu()
+    )
 
 
 # ==================== Получение статуса задачи ====================
@@ -127,25 +176,28 @@ async def status_command(message: Message, state: FSMContext):
 async def inline_status_command(query: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Статус задач'"""
     
-    await query.answer()
+    # await query.answer()
     await state.clear()
     await process_show_status(query.message)
     
 
 async def process_show_status(message: Message):
-    """Получаем статус задач пользователя"""
-    
+    """Получаем статус задач пользователя"""    
     # Получаем все задачи пользователя
-    tasks = await db_manage.get_parsing_tasks_by_user(message.from_user.id)
+    tasks = await db_manage.get_parsing_tasks_by_user(message.chat.id)
     
     if not tasks:
         await message.edit_text(
             '📊 <b>Статус задач</b>\n\n'
             'У вас нет активных задач парсинга.\n'
-            'Создайте новую задачу кнопкой "Парсинг"',
+            'Создайте новую задачу кнопкой "🔍 Парсинг"',
             reply_markup=user_main_menu()
         )
         return
+    
+    # Проверяем наличие активных задач
+    active_tasks = await db_manage.get_active_parsing_tasks_by_user(message.chat.id)
+    has_active_tasks = len(active_tasks) > 0
     
     # Формируем сообщение со статусами
     response = "📊 <b>Ваши задачи парсинга:</b>\n\n"
@@ -155,7 +207,8 @@ async def process_show_status(message: Message):
             ParsingTaskStatus.NEW: "🆕",
             ParsingTaskStatus.PROCESSING: "🔄",
             ParsingTaskStatus.COMPLETED: "✅",
-            ParsingTaskStatus.ERROR: "❌"
+            ParsingTaskStatus.ERROR: "❌",
+            ParsingTaskStatus.CANCELLED: "🚫"
         }.get(task.status, "❓")
         
         created_time = task.created_at.strftime("%d.%m.%Y %H:%M") if task.created_at else "N/A"
@@ -171,15 +224,32 @@ async def process_show_status(message: Message):
     if len(tasks) > 5:
         response += f"\n... и еще {len(tasks) - 5} задач. Показаны последние 5."
     
+
+    # Можно перенести в клавиатуры
+    ############################################################################
+    # Создаем клавиатуру
+    builder = InlineKeyboardBuilder()
+    
+    if has_active_tasks:
+        builder.button(text=btn_cancel_task, callback_data='btn_cancel_task')
+    
+    builder.button(text="🔄 Обновить", callback_data='btn_status')
+    builder.button(text="🏠 Главное меню", callback_data='btn_main_menu')
+    builder.adjust(1)
+    
+    keyboard = builder.as_markup()
+    ############################################################################
+
+
     try:
         await message.edit_text(
             text=response,
-            reply_markup=user_main_menu(),
+            reply_markup=keyboard,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
     except TelegramBadRequest:
         await message.answer(
             text=response,
-            reply_markup=user_main_menu(),
+            reply_markup=keyboard,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
