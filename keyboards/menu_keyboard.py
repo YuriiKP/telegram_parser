@@ -32,7 +32,7 @@ def user_main_menu():
     builder.button(text=btn_buy, callback_data='btn_buy')
     builder.button(text=btn_help, callback_data='btn_help')
 
-    builder.adjust(1)
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 

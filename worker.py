@@ -55,18 +55,13 @@ async def process_task(task: ParsingTask):
                     # fallback на парсинг участников чата
                     users_data = await parser.parse_users_chat(task.target_url)
 
-                #######################################
-                print(len(users_data))
-                #######################################
-
+                
                 # Отправляем файлы пользователю
                 if users_data:
                     try:
-                        # Создаем Excel файл
-                        excel_bytes_io = parser.get_excel_bytes(users_data)
-                        
-                        # Создаем TXT файл
+                        # Создаем TXT и Excel файл
                         txt_bytes_io = parser.get_txt_bytes(users_data)
+                        excel_bytes_io = parser.get_excel_bytes(users_data)
                         
                         # Текстовое описание типа парсинга
                         type_description = {
@@ -87,18 +82,20 @@ async def process_task(task: ParsingTask):
                         )
                         
                         # Отправляем TXT файл (преобразуем BytesIO в bytes)
-                        await bot.send_document(
-                            chat_id=task.creator_id,
-                            document=BufferedInputFile(file=txt_bytes_io.getvalue(), filename="users.txt"),
-                            caption=f"TXT файл с данными участников (задача #{task.id})"
-                        )
+                        if txt_bytes_io:
+                            await bot.send_document(
+                                chat_id=task.creator_id,
+                                document=BufferedInputFile(file=txt_bytes_io.getvalue(), filename="users.txt"),
+                                caption=f"TXT файл с данными участников (задача #{task.id})"
+                            )
                         
                         # Отправляем Excel файл (преобразуем BytesIO в bytes)
-                        await bot.send_document(
-                            chat_id=task.creator_id,
-                            document=BufferedInputFile(file=excel_bytes_io.getvalue(), filename="users.xlsx"),
-                            caption=f"Excel файл с данными участников (задача #{task.id})"
-                        )
+                        if excel_bytes_io:
+                            await bot.send_document(
+                                chat_id=task.creator_id,
+                                document=BufferedInputFile(file=excel_bytes_io.getvalue(), filename="users.xlsx"),
+                                caption=f"Excel файл с данными участников (задача #{task.id})"
+                            )
                         
                         logger.info(f"Файлы отправлены пользователю {task.creator_id} для задачи {task.id}")
                         

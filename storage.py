@@ -20,6 +20,7 @@ class User(Base):
     status_user = Column(String(64), default='user')
     language = Column(String(2), default='ru')
     subscription_end = Column(DateTime, nullable=True)
+    parse_only_active = Column(Boolean, default=False, nullable=False)
 
 
 
@@ -148,6 +149,7 @@ class DB_M:
 
 
     async def get_status_user(self, user_id):
+        """Получить статус пользователя"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(User.status_user).where(User.user_id == user_id)
@@ -162,6 +164,7 @@ class DB_M:
 
 
     async def get_admins(self):
+        """Получить всех админов бота"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(User).where(
@@ -174,6 +177,7 @@ class DB_M:
 
 
     async def update_user(self, user_id, **kwargs) -> None:
+        """Обновить информацию о пользователе"""
         async with self.async_session() as session:
             # Получаем текущего пользователя
             result = await session.execute(
@@ -193,6 +197,7 @@ class DB_M:
 
 
     async def count_users(self) -> int:
+        """Получить кол-во всех пользователей"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(func.count(User.user_id))
@@ -203,6 +208,7 @@ class DB_M:
 
 
     async def get_users_id(self) -> list:
+        """Получить id всех пользователей бота"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(User.user_id)
@@ -213,6 +219,7 @@ class DB_M:
 
 
     async def add_payment(self, user_id, amount, currency, payload, telegram_payment_charge_id, provider_payment_charge_id=None, status='completed'):
+        """Сохранить данные о платеже в базу"""
         async with self.async_session() as session:
             new_payment = Payment(
                 user_id=user_id,
@@ -228,6 +235,7 @@ class DB_M:
 
 
     async def get_payments_by_user(self, user_id):
+        """Получить данные о платежах пользователя"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(Payment).where(Payment.user_id == user_id).order_by(Payment.payment_date.desc())

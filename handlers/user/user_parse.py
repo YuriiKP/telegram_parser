@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Обработчики инлайн кнопок
 @dp.callback_query(F.data == 'btn_parse')
-async def inline_parse_command(query: CallbackQuery, state: FSMContext):
+async def parse_command(query: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Парсинг'"""
     
     # Проверяем, есть ли у пользователя активные задачи (NEW или PROCESSING)
@@ -49,17 +49,38 @@ async def inline_parse_command(query: CallbackQuery, state: FSMContext):
     # Устанавливаем состояние ожидания типа парсинга
     await state.set_state(State_Parsing.waiting_for_parsing_type)
     
+    # Получаем текущую настройку пользователя
+    user = await db_manage.get_user_by_id(query.from_user.id)
+    parse_only_active_text = "ВКЛ" if user.parse_only_active else "ВЫКЛ"
+    
     builder = InlineKeyboardBuilder()
     builder.button(text="👥 Парсинг участников чата", callback_data='parsing_type_chat_members')
     builder.button(text="✍️ Парсинг писавших в чат", callback_data='parsing_type_chat_writers')
     builder.button(text="💬 Парсинг комментаторов канала", callback_data='parsing_type_channel_commenters')
+    builder.button(text=f"🎯 Только активных: {parse_only_active_text}", callback_data='btn_only_active')
     builder.button(text=btn_back, callback_data='btn_main_menu')
     builder.adjust(1)
     
     await query.message.edit_text(
-        "Выберите тип парсинга:",
+        f"Выберите тип парсинга:\n\n"
+        f"<b>Настройки:</b>\n"
+        f"• Только активных: {parse_only_active_text}",
         reply_markup=builder.as_markup()
     )
+
+
+@dp.callback_query(F.data == 'btn_only_active')
+async def toggle_only_active_handler(query: CallbackQuery, state: FSMContext):
+    """Обработка переключения настройки 'Только активных'"""
+    # Получаем пользователя
+    user = await db_manage.get_user_by_id(query.from_user.id)
+    
+    # Инвертируем текущее значение
+    new_value = not user.parse_only_active
+    await db_manage.update_user(query.from_user.id, parse_only_active=new_value)
+
+    await parse_command(query, state)
+    
 
 
 @dp.callback_query(F.data.startswith('parsing_type_'))
@@ -98,7 +119,7 @@ async def process_parsing_link(message: Message, state: FSMContext):
     
     # Получаем сохраненный тип парсинга из состояния
     data = await state.get_data()
-    parsing_type = data.get('parsing_type', ParsingType.CHAT_MEMBERS)
+    parsing_type = data['parsing_type']
     
     # Очищаем состояние
     await state.clear()
@@ -224,37 +245,31 @@ async def inline_status_command(query: CallbackQuery, state: FSMContext):
 
 async def process_show_status(message: Message):
     """Получаем статус задач пользователя"""    
-    # Получаем все задачи пользователя
-    tasks = await db_manage.get_parsing_tasks_by_user(message.chat.id)
-    
-    if not tasks:
-        await message.edit_text(
-            '📊 <b>Статус задач</b>\n\n'
-            'У вас нет активных задач парсинга.\n'
-            'Создайте новую задачу кнопкой "🔍 Парсинг"',
-            reply_markup=user_main_menu()
-        )
-        return
+    status_emoji_map = {
+        ParsingTaskStatus.NEW: "🆕",
+        ParsingTaskStatus.PROCESSING: "🔄",
+        ParsingTaskStatus.COMPLETED: "✅",
+        ParsingTaskStatus.ERROR: "❌",
+        ParsingTaskStatus.CANCELLED: "🚫"
+    }
     
     # Проверяем наличие активных задач
-    active_tasks = await db_manage.get_active_parsing_tasks_by_user(message.chat.id)
-    has_active_tasks = len(active_tasks) > 0
-    
-    # Формируем сообщение со статусами
-    response = "📊 <b>Ваши задачи парсинга:</b>\n\n"
-    
-    for task in tasks[-5:]:  # Показываем последние 5 задач
-        status_emoji = {
-            ParsingTaskStatus.NEW: "🆕",
-            ParsingTaskStatus.PROCESSING: "🔄",
-            ParsingTaskStatus.COMPLETED: "✅",
-            ParsingTaskStatus.ERROR: "❌",
-            ParsingTaskStatus.CANCELLED: "🚫"
-        }.get(task.status, "❓")
+    has_active_tasks = False
+    tasks = await db_manage.get_active_parsing_tasks_by_user(message.chat.id)
+    if tasks:
+        has_active_tasks = True
+        text = "🔎 <b>Задачи в работе:</b>\n"
+    else:
+        tasks = await db_manage.get_parsing_tasks_by_user(message.chat.id)
+        text = "📊 <b>Последние 5 задач парсинга:</b>\n\n"
+        
+        
+    for task in tasks[:5]:  # Показываем последние 5 задач
+        status_emoji = status_emoji_map.get(task.status, "❓")
         
         created_time = task.created_at.strftime("%d.%m.%Y %H:%M") if task.created_at else "N/A"
         
-        response += (
+        text += (
             f"{status_emoji} <b>Задача #{task.id}</b>\n"
             f"Ссылка: {task.target_url[:50]}...\n"
             f"Статус: {task.status.value}\n"
@@ -263,7 +278,7 @@ async def process_show_status(message: Message):
         )
     
     if len(tasks) > 5:
-        response += f"\n... и еще {len(tasks) - 5} задач. Показаны последние 5."
+        text += f"\n... и еще {len(tasks) - 5} задач."
     
 
     # Можно перенести в клавиатуры
@@ -284,13 +299,13 @@ async def process_show_status(message: Message):
 
     try:
         await message.edit_text(
-            text=response,
+            text=text,
             reply_markup=keyboard,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
     except TelegramBadRequest:
         await message.answer(
-            text=response,
+            text=text,
             reply_markup=keyboard,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
