@@ -6,12 +6,12 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram import F
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from loader import dp, bot, db_manage
 from keyboards import *
-from storage import ParsingTaskStatus
+from storage import ParsingTaskStatus, ParsingType
 from utils.states import State_Parsing
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 
@@ -21,23 +21,73 @@ logger = logging.getLogger(__name__)
 # Обработчики инлайн кнопок
 @dp.callback_query(F.data == 'btn_parse')
 async def inline_parse_command(query: CallbackQuery, state: FSMContext):
-    """Обработка нажатия кнопки 'Парсинг' - запуск процесса парсинга"""
-    await query.answer()
+    """Обработка нажатия кнопки 'Парсинг'"""
     
-    # Устанавливаем состояние ожидания ссылки
+    # Проверяем, есть ли у пользователя активные задачи (NEW или PROCESSING)
+    active_tasks = await db_manage.get_active_parsing_tasks_by_user(query.message.chat.id)
+    if active_tasks:
+        # Формируем сообщение с информацией об активных задачах
+        task_info = "\n".join(
+            f"• Задача #{task.id}: {task.status.value} (создана {task.created_at.strftime('%d.%m.%Y %H:%M')})"
+            for task in active_tasks[:3]  # Показываем до 3 задач
+        )
+        if len(active_tasks) > 3:
+            task_info += f"\n• ... и ещё {len(active_tasks) - 3} задач"
+        
+        await query.answer(
+            f"⏳ <b>У вас уже есть активная задача парсинга!</b>\n\n"
+            f"Вы можете запустить только одну задачу одновременно.\n"
+            f"Дождитесь завершения текущей задачи или отмените её.\n\n"
+            f"<b>Активные задачи:</b>\n{task_info}\n\n"
+            f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
+            reply_markup=user_main_menu(),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        return
+    
+    
+    # Устанавливаем состояние ожидания типа парсинга
+    await state.set_state(State_Parsing.waiting_for_parsing_type)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👥 Парсинг участников чата", callback_data='parsing_type_chat_members')
+    builder.button(text="✍️ Парсинг писавших в чат", callback_data='parsing_type_chat_writers')
+    builder.button(text="💬 Парсинг комментаторов канала", callback_data='parsing_type_channel_commenters')
+    builder.button(text=btn_back, callback_data='btn_main_menu')
+    builder.adjust(1)
+    
+    await query.message.edit_text(
+        "Выберите тип парсинга:",
+        reply_markup=builder.as_markup()
+    )
+
+
+@dp.callback_query(F.data.startswith('parsing_type_'))
+async def process_parsing_type_selection(query: CallbackQuery, state: FSMContext):
+    """Обработка выбора типа парсинга"""
+    parsing_type_map = {
+        'parsing_type_chat_members': ParsingType.CHAT_MEMBERS,
+        'parsing_type_chat_writers': ParsingType.CHAT_WRITERS,
+        'parsing_type_channel_commenters': ParsingType.CHANNEL_COMMENTERS,
+    }
+    
+    parsing_type = parsing_type_map.get(query.data)
+    if not parsing_type:
+        await query.answer("Неизвестный тип парсинга")
+        return
+    
+    # Сохраняем тип парсинга в состоянии
+    await state.update_data(parsing_type=parsing_type)
+    
+    # Переходим к ожиданию ссылки
     await state.set_state(State_Parsing.waiting_for_link)
     
-
-    # Поменять меню
-    #################################################################################
+    builder = InlineKeyboardBuilder()
+    builder.button(text=btn_back, callback_data='btn_parse')
+    
     await query.message.edit_text(
-        "🔍 <b>Парсинг чата/канала</b>\n\n"
-        "Отправьте ссылку на чат или канал в любом формате:\n"
-        "• https://t.me/chat_name\n"
-        "• @chat_name\n"
-        "• t.me/chat_name\n\n"
-        "<i>Требуется активная подписка.</i>\n\n",
-        reply_markup=user_main_menu()
+        "Отправьте ссылку на чат или канал в любом формате:",
+        reply_markup=builder.as_markup()
     )
 
 
@@ -45,6 +95,10 @@ async def inline_parse_command(query: CallbackQuery, state: FSMContext):
 async def process_parsing_link(message: Message, state: FSMContext):
     """Обработка ссылки на парсинг, отправленной пользователем"""
     link = message.text.strip()
+    
+    # Получаем сохраненный тип парсинга из состояния
+    data = await state.get_data()
+    parsing_type = data.get('parsing_type', ParsingType.CHAT_MEMBERS)
     
     # Очищаем состояние
     await state.clear()
@@ -58,7 +112,7 @@ async def process_parsing_link(message: Message, state: FSMContext):
         return
     
     # Проверяем, что ссылка на Telegram
-    telegram_pattern = r'^(https?://)?(t\.me/|telegram\.me/)(\+[a-zA-Z0-9_-]+|[a-zA-Z0-9_]+)(/[0-9]+)?$'
+    telegram_pattern = r'^(https?://)?(t\.me/|telegram\.me/)?(@)?(\+?[a-zA-Z0-9_-]+)(/[0-9]+)?$'
     if not re.match(telegram_pattern, link):
         await message.answer(
             "❌ Некорректная ссылка. Используйте ссылку на Telegram чат/канал.\n"
@@ -69,38 +123,25 @@ async def process_parsing_link(message: Message, state: FSMContext):
         )
         return
     
-    # Проверяем, есть ли у пользователя активные задачи (NEW или PROCESSING)
-    active_tasks = await db_manage.get_active_parsing_tasks_by_user(message.from_user.id)
-    if active_tasks:
-        # Формируем сообщение с информацией об активных задачах
-        task_info = "\n".join(
-            f"• Задача #{task.id}: {task.status.value} (создана {task.created_at.strftime('%d.%m.%Y %H:%M')})"
-            for task in active_tasks[:3]  # Показываем до 3 задач
-        )
-        if len(active_tasks) > 3:
-            task_info += f"\n• ... и ещё {len(active_tasks) - 3} задач"
-        
-        await message.answer(
-            f"⏳ <b>У вас уже есть активная задача парсинга!</b>\n\n"
-            f"Вы можете запустить только одну задачу одновременно.\n"
-            f"Дождитесь завершения текущей задачи или отмените её.\n\n"
-            f"<b>Активные задачи:</b>\n{task_info}\n\n"
-            f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
-            reply_markup=user_main_menu(),
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
-        )
-        return
-    
-    # Создаем задачу парсинга
+    # Создаем задачу парсинга с указанным типом
     try:
         task_id = await db_manage.create_parsing_task(
             creator_id=message.from_user.id,
-            target_url=link
+            target_url=link,
+            parsing_type=parsing_type
         )
+        
+        # Текстовое описание типа парсинга
+        type_description = {
+            ParsingType.CHAT_MEMBERS: "участников чата",
+            ParsingType.CHAT_WRITERS: "писавших в чат",
+            ParsingType.CHANNEL_COMMENTERS: "комментаторов канала"
+        }.get(parsing_type, "участников")
         
         await message.answer(
             f"✅ <b>Задача парсинга создана!</b>\n\n"
             f"<b>ID задачи:</b> {task_id}\n"
+            f"<b>Тип парсинга:</b> {type_description}\n"
             f"<b>Ссылка:</b> {link}\n\n"
             f"Статус можно проверить кнопкой <b>\"Статус задач\"</b> или командой /status\n"
             f"Ожидайте уведомления о завершения.",

@@ -31,6 +31,13 @@ class ParsingTaskStatus(PyEnum):
     CANCELLED = 'cancelled'
 
 
+class ParsingType(PyEnum):
+    """Типы парсинга"""
+    CHAT_MEMBERS = 'chat_members'          # Парсинг участников чата
+    CHAT_WRITERS = 'chat_writers'          # Парсинг писавших в чат
+    CHANNEL_COMMENTERS = 'channel_commenters'  # Парсинг комментаторов канала
+
+
 class SystemAccountStatus(PyEnum):
     """Статусы системных аккаунтов"""
     OK = 'ok'                     # аккаунт работает нормально и свободен
@@ -47,6 +54,7 @@ class ParsingTask(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     creator_id = Column(BigInteger, nullable=False)
     target_url = Column(String(500), nullable=False)
+    parsing_type = Column(SQLEnum(ParsingType), default=ParsingType.CHAT_MEMBERS, nullable=False)  # тип парсинга
     status = Column(SQLEnum(ParsingTaskStatus), default=ParsingTaskStatus.NEW, nullable=False)  # new, processing, completed, error
     created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
     updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
@@ -244,12 +252,13 @@ class DB_M:
 
 
     # ==================== ParsingTask методы ====================
-    async def create_parsing_task(self, creator_id, target_url):
+    async def create_parsing_task(self, creator_id, target_url, parsing_type=ParsingType.CHAT_MEMBERS):
         """Создать новую задачу парсинга"""
         async with self.async_session() as session:
             new_task = ParsingTask(
                 creator_id=creator_id,
                 target_url=target_url,
+                parsing_type=parsing_type,
                 status=ParsingTaskStatus.NEW
             )
             session.add(new_task)

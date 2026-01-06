@@ -8,7 +8,7 @@ from aiogram.types import BufferedInputFile, LinkPreviewOptions
 
 from loader import db_manage, bot
 from parser.telegram_parser import TelegramParser
-from storage import ParsingTask, ParsingTaskStatus, SystemAccountStatus
+from storage import ParsingTask, ParsingTaskStatus, SystemAccountStatus, ParsingType
 
 
 
@@ -33,8 +33,16 @@ async def process_task(task: ParsingTask):
             account_session_path=account.session,
             task_id=task.id
         ) as parser:
-            # Парсим участников чата
-            users_data = await parser.parse_channel_commenters(task.target_url)
+            # Выбираем метод парсинга в зависимости от типа
+            if task.parsing_type == ParsingType.CHAT_MEMBERS:
+                users_data = await parser.parse_users_chat(task.target_url)
+            elif task.parsing_type == ParsingType.CHAT_WRITERS:
+                users_data = await parser.parse_users_from_history(task.target_url)
+            elif task.parsing_type == ParsingType.CHANNEL_COMMENTERS:
+                users_data = await parser.parse_channel_commenters(task.target_url)
+            else:
+                # fallback на парсинг участников чата
+                users_data = await parser.parse_users_chat(task.target_url)
 
             #######################################
             print(len(users_data))
@@ -49,10 +57,18 @@ async def process_task(task: ParsingTask):
                     # Создаем TXT файл
                     txt_bytes_io = parser.get_txt_bytes(users_data)
                     
+                    # Текстовое описание типа парсинга
+                    type_description = {
+                        ParsingType.CHAT_MEMBERS: "участников чата",
+                        ParsingType.CHAT_WRITERS: "писавших в чат",
+                        ParsingType.CHANNEL_COMMENTERS: "комментаторов канала"
+                    }.get(task.parsing_type, "участников")
+                    
                     # Отправляем сообщение пользователю
                     await bot.send_message(
                         chat_id=task.creator_id,
                         text=f"✅ Задача парсинга #{task.id} завершена!\n"
+                             f"Тип парсинга: {type_description}\n"
                              f"Ссылка: {task.target_url}\n"
                              f"Найдено участников: {len(users_data)}\n\n"
                              f"Файлы с результатами:",

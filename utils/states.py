@@ -13,4 +13,5 @@ class State_Mailing(StatesGroup):
 
 class State_Parsing(StatesGroup):
     """Состояние для процесса парсинга"""
-    waiting_for_link = State()
+    waiting_for_parsing_type = State()  # выбор типа парсинга
+    waiting_for_link = State()          # ожидание ссылки

@@ -18,6 +18,7 @@ btn_help = '🆘 Помощь'
 btn_parse = '🔍 Парсинг'
 btn_status = '📊 Статус задач'
 btn_cancel_task = '❌ Отменить задачу'
+btn_back = '👈 Назад'
 
 
 # Текст юзеров

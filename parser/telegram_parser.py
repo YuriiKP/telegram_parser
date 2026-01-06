@@ -199,6 +199,9 @@ class TelegramParser:
        
         users_obj = []
         try:
+################################################################################
+            c = 0
+################################################################################
             async for user in self.client.iter_participants(chat, limit=limit):
                 if user.bot:
                     continue
@@ -207,7 +210,13 @@ class TelegramParser:
                 await self.check_cancelled()
 
                 users_obj.append(user)
-            
+
+################################################################################
+                c += 1 
+                if c == 5:
+                    break
+################################################################################    
+        
             await asyncio.sleep(random.uniform(10, 20))
 
             users_data = []
@@ -222,7 +231,6 @@ class TelegramParser:
                 full_user = await self.client(GetFullUserRequest(user_obj))
                 user_data = await self._extract_user_data(full_user)
                 users_data.append(user_data)
-
 
 
         except asyncio.CancelledError:
@@ -260,12 +268,9 @@ class TelegramParser:
         users_obj = []
         seen_users = set()
         try:
-
-            ###########################
+################################################################################
             c = 0
-            ###########################
-
-
+################################################################################
             async for comment in self.client.iter_messages(entity=chat, limit=limit):
                 # Проверяем отмену каждые 10 сообщений
                 await self.check_cancelled()
@@ -273,16 +278,15 @@ class TelegramParser:
                 if isinstance(comment.from_id, PeerUser) and comment.from_id.user_id not in seen_users:
                     seen_users.add(comment.from_id.user_id)
                     users_obj.append(comment.from_id) # Здесь добавляю объекты в список, чтобы можно было дальше получить информацию, просто по id это не получится
-
-                    ###########################
-                    c += 1
-                    if c == 10:
-                        break
-                    ###########################
+            
+################################################################################
+                c += 1 
+                if c == 5:
+                    break
+################################################################################ 
             
             await asyncio.sleep(random.uniform(10, 20))
 
-            
             users_data = []
             for user_obj in users_obj:
                 # Проверяем отмену
