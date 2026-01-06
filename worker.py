@@ -37,7 +37,7 @@ async def process_task(task: ParsingTask):
             users_data = await parser.parse_channel_commenters(task.target_url)
 
             #######################################
-            print(users_data)
+            print(len(users_data))
             #######################################
 
             # Отправляем файлы пользователю

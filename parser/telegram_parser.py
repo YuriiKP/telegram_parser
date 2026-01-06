@@ -1,6 +1,7 @@
 import os
 import json
 import io
+import random
 import asyncio
 import logging
 from typing import List, Dict, Optional, Union
@@ -16,7 +17,7 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
 
 from errors import JoinRequestSentError
-from storage import SystemAccountStatus, ParsingTaskStatus
+from storage import SystemAccountStatus, ParsingTaskStatus, DB_M
 
 
 
@@ -31,7 +32,7 @@ class TelegramParser:
         self, 
         session_path: str, 
         config_path: str = None, 
-        db_manager = None, 
+        db_manager: DB_M = None, 
         account_session_path: str = None, 
         task_id: int = None
     ):
@@ -50,8 +51,10 @@ class TelegramParser:
         self.db_manager = db_manager
         self.account_session_path = account_session_path or session_path
         self.task_id = task_id
+        
         self.client = None
         self.logger = logging.getLogger(__name__)
+        self.count = 0
         
 
     async def __aenter__(self):
@@ -173,9 +176,12 @@ class TelegramParser:
         """Проверить, отменена ли задача (если task_id задан)"""
         if self.task_id is None or self.db_manager is None:
             return False
-        task = await self.db_manager.get_parsing_task(self.task_id)
-        if task and task.status == ParsingTaskStatus.CANCELLED:
-            raise asyncio.CancelledError(f"Task {self.task_id} was cancelled")
+        
+        self.count += 1
+        if self.count % 10 == 0:
+            task = await self.db_manager.get_parsing_task(self.task_id)
+            if task and task.status == ParsingTaskStatus.CANCELLED:
+                raise asyncio.CancelledError(f"Задача {self.task_id} отменена пользователем")
 
 
     async def parse_users_chat(self, chat: str, limit: int = 10000) -> List[Dict]:
@@ -190,24 +196,34 @@ class TelegramParser:
             List[Dict]: Список участников с их данными.
         """
         
-        users_data = []
+       
+        users_obj = []
         try:
-            count = 0
             async for user in self.client.iter_participants(chat, limit=limit):
                 if user.bot:
                     continue
 
-                # Проверяем отмену каждые 10 участников
-                count += 1
-                if count % 10 == 0:
-                    await self.check_cancelled()
+                # Проверяем отмену
+                await self.check_cancelled()
+
+                users_obj.append(user)
+            
+            await asyncio.sleep(random.uniform(10, 20))
+
+            users_data = []
+            for user_obj in users_obj:
+                # Проверяем отмену
+                await self.check_cancelled()
+
+                # Анти-флуд задержка ПЕРЕД тяжелым запросом
+                await asyncio.sleep(random.uniform(0.1, 0.5))
 
                 # Получаем полную информацию о пользователе, чтобы достать 'о себе'
-                full_user = await self.client(GetFullUserRequest(user.id))
-                
+                full_user = await self.client(GetFullUserRequest(user_obj))
                 user_data = await self._extract_user_data(full_user)
                 users_data.append(user_data)
-            print(users_data)
+
+
 
         except asyncio.CancelledError:
             self.logger.info(f"Парсинг задачи {self.task_id} отменен")
@@ -240,27 +256,48 @@ class TelegramParser:
             List[Dict]: Список участников с их данными.
         """
         
-        users_data = []
+        
+        users_obj = []
         seen_users = set()
         try:
-            count = 0
+
+            ###########################
+            c = 0
+            ###########################
+
+
             async for comment in self.client.iter_messages(entity=chat, limit=limit):
                 # Проверяем отмену каждые 10 сообщений
-                count += 1
-                if count % 10 == 0:
-                    await self.check_cancelled()
+                await self.check_cancelled()
       
                 if isinstance(comment.from_id, PeerUser) and comment.from_id.user_id not in seen_users:
                     seen_users.add(comment.from_id.user_id)
+                    users_obj.append(comment.from_id) # Здесь добавляю объекты в список, чтобы можно было дальше получить информацию, просто по id это не получится
 
-                    # Получаем полную информацию о пользователе, чтобы достать 'о себе'
-                    full_user = await self.client(GetFullUserRequest(comment.from_id))
-                    if full_user.users[0].bot:
-                        continue
+                    ###########################
+                    c += 1
+                    if c == 10:
+                        break
+                    ###########################
+            
+            await asyncio.sleep(random.uniform(10, 20))
 
-                    user_data = await self._extract_user_data(full_user)
-                    users_data.append(user_data)
+            
+            users_data = []
+            for user_obj in users_obj:
+                # Проверяем отмену
+                await self.check_cancelled()
 
+                # Анти-флуд задержка ПЕРЕД тяжелым запросом
+                await asyncio.sleep(random.uniform(0.1, 0.5))
+
+                # Получаем полную информацию о пользователе, чтобы достать 'о себе'
+                full_user = await self.client(GetFullUserRequest(user_obj))
+                if full_user.users[0].bot:
+                    continue
+
+                user_data = await self._extract_user_data(full_user)
+                users_data.append(user_data)
 
         
         except asyncio.CancelledError:
@@ -332,7 +369,7 @@ class TelegramParser:
             "last_name": user_obj.last_name or "",
             "phone": user_obj.phone or "",
             "premium": str(user_obj.premium),
-            "lang_code": user_obj.lang_code or "",
+            # "lang_code": user_obj.lang_code or "",
             "bio": full_info.about or ""
         }
         return user_data
@@ -382,7 +419,7 @@ class TelegramParser:
         sheet.title = "Users"
         
         # Заголовки
-        headers = ["ID", "Username", "First Name", "Last Name", "Phone"]
+        headers = ["ID", "Username", "First Name", "Last Name", "Phone", "Premium" "Bio"]
         for col_num, header in enumerate(headers, 1):
             cell = sheet.cell(row=1, column=col_num, value=header)
             cell.font = Font(bold=True)
@@ -390,10 +427,12 @@ class TelegramParser:
         # Данные
         for row_num, user in enumerate(users_data, 2):
             sheet.cell(row=row_num, column=1, value=user["id"])
-            sheet.cell(row=row_num, column=2, value=user["username"])
+            sheet.cell(row=row_num, column=2, value=f"@{user["username"]}")
             sheet.cell(row=row_num, column=3, value=user["first_name"])
             sheet.cell(row=row_num, column=4, value=user["last_name"])
             sheet.cell(row=row_num, column=5, value=user["phone"])
+            sheet.cell(row=row_num, column=6, value="Да" if user["premium"] == "True" else "")
+            sheet.cell(row=row_num, column=7, value=user["bio"])
         
         # Сохраняем в BytesIO вместо файла на диске
         excel_bytes = io.BytesIO()
@@ -416,8 +455,8 @@ class TelegramParser:
         """
         txt_content = io.StringIO()
         for user in users_data:
-            line = f"{user['id']}|{user['username']}|{user['first_name']}|{user['phone']}\n"
-            txt_content.write(line)
+            if user['username']:
+                txt_content.write(f"@{user['username']}\n")
         
         # Конвертируем StringIO в BytesIO для отправки через Telegram
         txt_bytes = io.BytesIO(txt_content.getvalue().encode('utf-8'))
