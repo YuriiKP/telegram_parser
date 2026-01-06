@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 
 from aiogram.types import BufferedInputFile, LinkPreviewOptions
+from telethon.errors import FloodWaitError
 
 from loader import db_manage, bot
 from parser.telegram_parser import TelegramParser
@@ -16,125 +17,167 @@ logger = logging.getLogger(__name__)
 
 
 async def process_task(task: ParsingTask):
-    """Обработать одну задачу парсинга"""
-    account = await db_manage.get_free_account()
-    if not account:
-        logger.warning(f"Нет свободных аккаунтов для задачи {task.id}")
-        return
+    """Обработать одну задачу парсинга с retry при ошибках аккаунта"""
+    MAX_RETRIES = 2  # Максимум 2 попытки (включая первую)
+    attempt = 0
+    last_error = None
+    
+    while attempt < MAX_RETRIES:
+        attempt += 1
+        account = await db_manage.get_free_account()
+        if not account:
+            logger.warning(f"Нет свободных аккаунтов для задачи {task.id}")
+            # Если это повторная попытка и нет аккаунтов, выходим
+            if attempt > 1:
+                logger.error(f"Задача {task.id} не может быть выполнена: нет свободных аккаунтов после {attempt-1} ошибок")
+            return
 
-    try:
-        logger.info(f"Начинаем обработку задачи {task.id} с аккаунтом {account.session}")
+        try:
+            logger.info(f"Попытка {attempt}/{MAX_RETRIES} обработки задачи {task.id} с аккаунтом {account.session}")
 
-        # Инициализируем парсер с передачей db_manager для обновления статуса ошибок и task_id для проверки отмены
-        async with TelegramParser(
-            session_path=account.session,
-            config_path=account.json,
-            db_manager=db_manage,
-            account_session_path=account.session,
-            task_id=task.id
-        ) as parser:
-            # Выбираем метод парсинга в зависимости от типа
-            if task.parsing_type == ParsingType.CHAT_MEMBERS:
-                users_data = await parser.parse_users_chat(task.target_url)
-            elif task.parsing_type == ParsingType.CHAT_WRITERS:
-                users_data = await parser.parse_users_from_history(task.target_url)
-            elif task.parsing_type == ParsingType.CHANNEL_COMMENTERS:
-                users_data = await parser.parse_channel_commenters(task.target_url)
-            else:
-                # fallback на парсинг участников чата
-                users_data = await parser.parse_users_chat(task.target_url)
+            # Инициализируем парсер с передачей db_manager для обновления статуса ошибок и task_id для проверки отмены
+            async with TelegramParser(
+                session_path=account.session,
+                config_path=account.json,
+                db_manager=db_manage,
+                account_session_path=account.session,
+                task_id=task.id
+            ) as parser:
+                
+                # Выбираем метод парсинга в зависимости от типа
+                if task.parsing_type == ParsingType.CHAT_MEMBERS:
+                    users_data = await parser.parse_users_chat(task.target_url)
+                elif task.parsing_type == ParsingType.CHAT_WRITERS:
+                    users_data = await parser.parse_users_from_history(task.target_url)
+                elif task.parsing_type == ParsingType.CHANNEL_COMMENTERS:
+                    users_data = await parser.parse_channel_commenters(task.target_url)
+                else:
+                    # fallback на парсинг участников чата
+                    users_data = await parser.parse_users_chat(task.target_url)
 
-            #######################################
-            print(len(users_data))
-            #######################################
+                #######################################
+                print(len(users_data))
+                #######################################
 
-            # Отправляем файлы пользователю
-            if users_data:
-                try:
-                    # Создаем Excel файл
-                    excel_bytes_io = parser.get_excel_bytes(users_data)
-                    
-                    # Создаем TXT файл
-                    txt_bytes_io = parser.get_txt_bytes(users_data)
-                    
-                    # Текстовое описание типа парсинга
-                    type_description = {
-                        ParsingType.CHAT_MEMBERS: "участников чата",
-                        ParsingType.CHAT_WRITERS: "писавших в чат",
-                        ParsingType.CHANNEL_COMMENTERS: "комментаторов канала"
-                    }.get(task.parsing_type, "участников")
-                    
-                    # Отправляем сообщение пользователю
+                # Отправляем файлы пользователю
+                if users_data:
+                    try:
+                        # Создаем Excel файл
+                        excel_bytes_io = parser.get_excel_bytes(users_data)
+                        
+                        # Создаем TXT файл
+                        txt_bytes_io = parser.get_txt_bytes(users_data)
+                        
+                        # Текстовое описание типа парсинга
+                        type_description = {
+                            ParsingType.CHAT_MEMBERS: "участников чата",
+                            ParsingType.CHAT_WRITERS: "писавших в чат",
+                            ParsingType.CHANNEL_COMMENTERS: "комментаторов канала"
+                        }.get(task.parsing_type, "участников")
+                        
+                        # Отправляем сообщение пользователю
+                        await bot.send_message(
+                            chat_id=task.creator_id,
+                            text=f"✅ Задача парсинга #{task.id} завершена!\n"
+                                 f"Тип парсинга: {type_description}\n"
+                                 f"Ссылка: {task.target_url}\n"
+                                 f"Найдено участников: {len(users_data)}\n\n"
+                                 f"Файлы с результатами:",
+                            link_preview_options=LinkPreviewOptions(is_disabled=True)
+                        )
+                        
+                        # Отправляем TXT файл (преобразуем BytesIO в bytes)
+                        await bot.send_document(
+                            chat_id=task.creator_id,
+                            document=BufferedInputFile(file=txt_bytes_io.getvalue(), filename="users.txt"),
+                            caption=f"TXT файл с данными участников (задача #{task.id})"
+                        )
+                        
+                        # Отправляем Excel файл (преобразуем BytesIO в bytes)
+                        await bot.send_document(
+                            chat_id=task.creator_id,
+                            document=BufferedInputFile(file=excel_bytes_io.getvalue(), filename="users.xlsx"),
+                            caption=f"Excel файл с данными участников (задача #{task.id})"
+                        )
+                        
+                        logger.info(f"Файлы отправлены пользователю {task.creator_id} для задачи {task.id}")
+                        
+                    except Exception as e:
+                        logger.error(f"Ошибка при отправке файлов для задачи {task.id}: {e}")
+                        # Отправляем сообщение об ошибке
+                        await bot.send_message(
+                            chat_id=task.creator_id,
+                            text=f"❌ Задача #{task.id} завершена с ошибкой при отправке файлов"
+                        )
+                else:
                     await bot.send_message(
                         chat_id=task.creator_id,
-                        text=f"✅ Задача парсинга #{task.id} завершена!\n"
-                             f"Тип парсинга: {type_description}\n"
-                             f"Ссылка: {task.target_url}\n"
-                             f"Найдено участников: {len(users_data)}\n\n"
-                             f"Файлы с результатами:",
-                        link_preview_options=LinkPreviewOptions(is_disabled=True)
+                        text=f"⚠️ Задача #{task.id} завершена, но данные не найдены.\n"
+                             f"Ссылка: {task.target_url}"
                     )
-                    
-                    # Отправляем TXT файл (преобразуем BytesIO в bytes)
-                    await bot.send_document(
-                        chat_id=task.creator_id,
-                        document=BufferedInputFile(file=txt_bytes_io.getvalue(), filename="users.txt"),
-                        caption=f"TXT файл с данными участников (задача #{task.id})"
-                    )
-                    
-                    # Отправляем Excel файл (преобразуем BytesIO в bytes)
-                    await bot.send_document(
-                        chat_id=task.creator_id,
-                        document=BufferedInputFile(file=excel_bytes_io.getvalue(), filename="users.xlsx"),
-                        caption=f"Excel файл с данными участников (задача #{task.id})"
-                    )
-                    
-                    logger.info(f"Файлы отправлены пользователю {task.creator_id} для задачи {task.id}")
-                    
-                except Exception as e:
-                    logger.error(f"Ошибка при отправке файлов для задачи {task.id}: {e}")
-                    # Отправляем сообщение об ошибке
-                    await bot.send_message(
-                        chat_id=task.creator_id,
-                        text=f"❌ Задача #{task.id} завершена с ошибкой при отправке файлов: {str(e)}"
-                    )
+
+                # Обновляем статус задачи как completed
+                await db_manage.update_parsing_task_status(task.id, ParsingTaskStatus.COMPLETED)
+                logger.info(f"Задача {task.id} завершена успешно. Кол-во собранных юзеров: {len(users_data)}")
+                
+                # Успешное выполнение - выходим из цикла retry
+                return
+
+        except asyncio.CancelledError:
+            logger.info(f"Задача {task.id} была отменена пользователем")
+            # Статус уже CANCELLED, ничего не делаем
+            # Отправляем уведомление пользователю
+            await bot.send_message(
+                chat_id=task.creator_id,
+                text=f"🛑 Задача парсинга #{task.id} была отменена."
+            )
+            # При отмене не пытаемся повторять
+            return
+            
+        except FloodWaitError as e:
+            logger.error(f"FloodWait ошибка для аккаунта {account.session}: {e}")
+            last_error = e
+            # FloodWait - ошибка аккаунта, пробуем другой аккаунт
+            logger.info(f"Пробуем другой аккаунт для задачи {task.id} из-за FloodWait")
+            continue
+            
+        except Exception as e:
+            logger.error(f"Ошибка при обработке задачи {task.id} (попытка {attempt}): {e}")
+            last_error = e
+            
+            # Проверяем, является ли ошибка связанной с аккаунтом
+            error_str = str(e).lower()
+            is_account_error = any(keyword in error_str for keyword in [
+                'auth', 'authorization', 'phone', 'sign in', 'login',
+                'session', 'not authorized', 'banned', 'flood'
+            ])
+            
+            if is_account_error and attempt < MAX_RETRIES:
+                logger.info(f"Ошибка аккаунта, пробуем другой аккаунт для задачи {task.id}")
+                continue
             else:
-                await bot.send_message(
-                    chat_id=task.creator_id,
-                    text=f"⚠️ Задача #{task.id} завершена, но данные не найдены.\n"
-                         f"Ссылка: {task.target_url}"
-                )
+                # Не аккаунтная ошибка или достигнут лимит попыток
+                break
+                
+        finally:
+            # Освобождаем аккаунт (устанавливаем статус OK, если он не в состоянии ошибки)
+            # Проверяем текущий статус аккаунта
+            if account:
+                current_account = await db_manage.get_system_account_by_session(account.session)
+                if current_account and current_account.status == SystemAccountStatus.IS_BUSY:
+                    # Если аккаунт все еще занят (не был помечен как ошибка), освобождаем его
+                    await db_manage.set_system_account_status(account.session, SystemAccountStatus.OK)
 
-            # Обновляем статус задачи как completed
-            await db_manage.update_parsing_task_status(task.id, ParsingTaskStatus.COMPLETED)
-            logger.info(f"Задача {task.id} завершена успешно. Кол-во собранных юзеров: {len(users_data)}")
-
-    except asyncio.CancelledError:
-        logger.info(f"Задача {task.id} была отменена пользователем")
-        # Статус уже CANCELLED, ничего не делаем
-        # Отправляем уведомление пользователю
-        await bot.send_message(
-            chat_id=task.creator_id,
-            text=f"🛑 Задача парсинга #{task.id} была отменена."
-        )
-    except Exception as e:
-        logger.error(f"Ошибка при обработке задачи {task.id}: {e}")
-        # Обновляем статус как error
-        await db_manage.update_parsing_task_status(task.id, ParsingTaskStatus.ERROR)
-        
-        # Отправляем сообщение об ошибке пользователю
-        await bot.send_message(
-            chat_id=task.creator_id,
-            text=f"❌ Задача парсинга #{task.id} завершена с ошибкой"
-        )
-    finally:
-        # Освобождаем аккаунт (устанавливаем статус OK, если он не в состоянии ошибки)
-        # Проверяем текущий статус аккаунта
-        if account:
-            current_account = await db_manage.get_system_account_by_session(account.session)
-            if current_account and current_account.status == SystemAccountStatus.IS_BUSY:
-                # Если аккаунт все еще занят (не был помечен как ошибка), освобождаем его
-                await db_manage.set_system_account_status(account.session, SystemAccountStatus.OK)
+    # Если дошли сюда, значит все попытки исчерпаны или произошла неаккаунтная ошибка
+    logger.error(f"Задача {task.id} не выполнена после {attempt} попыток. Последняя ошибка: {last_error}")
+    # Обновляем статус как error
+    await db_manage.update_parsing_task_status(task.id, ParsingTaskStatus.ERROR)
+    
+    # Отправляем сообщение об ошибке пользователю
+    await bot.send_message(
+        chat_id=task.creator_id,
+        text=f"❌ Задача парсинга #{task.id} завершена с ошибкой после {attempt} попыток"
+    )
 
 
 async def worker():

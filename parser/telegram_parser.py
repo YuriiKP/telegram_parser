@@ -183,6 +183,48 @@ class TelegramParser:
             if task and task.status == ParsingTaskStatus.CANCELLED:
                 raise asyncio.CancelledError(f"Задача {self.task_id} отменена пользователем")
 
+    async def _handle_account_error(self, error: Exception):
+        """
+        Обработать ошибку аккаунта и установить соответствующий статус в БД.
+        
+        Args:
+            error: Исключение, которое произошло при работе с аккаунтом.
+        """
+        if not self.db_manager:
+            return
+        
+        error_str = str(error).lower()
+        
+        # FloodWaitError
+        if isinstance(error, FloodWaitError):
+            await self.db_manager.set_system_account_status(
+                self.account_session_path,
+                SystemAccountStatus.FLOOD_WAIT
+            )
+            return
+        
+        # Ошибки авторизации
+        if any(keyword in error_str for keyword in ['phone', 'auth', 'sign in', 'login', 'session', 'not authorized']):
+            await self.db_manager.set_system_account_status(
+                self.account_session_path,
+                SystemAccountStatus.AUTH_REQUIRED
+            )
+            return
+        
+        # Другие ошибки, которые могут указывать на бан
+        if any(keyword in error_str for keyword in ['banned', 'blocked', 'suspended', 'deleted']):
+            await self.db_manager.set_system_account_status(
+                self.account_session_path,
+                SystemAccountStatus.BANNED
+            )
+            return
+        
+        # По умолчанию помечаем как BANNED (консервативный подход)
+        await self.db_manager.set_system_account_status(
+            self.account_session_path,
+            SystemAccountStatus.BANNED
+        )
+
 
     async def parse_users_chat(self, chat: str, limit: int = 10000) -> List[Dict]:
         """
@@ -244,9 +286,11 @@ class TelegramParser:
             return await self.parse_users_chat(chat)
         except FloodWaitError as e:
             self.logger.error(f"FloodWait ошибка: {e}, {e.seconds}")
+            await self._handle_account_error(e)
             raise
         except Exception as e:
             self.logger.error(f"Ошибка парсинга участников из истории: {e}")
+            await self._handle_account_error(e)
             raise
         
         return users_data
@@ -315,9 +359,11 @@ class TelegramParser:
             return await self.parse_users_from_history(chat)
         except FloodWaitError as e:
             self.logger.error(f"FloodWait ошибка: {e}, {e.seconds}")
+            await self._handle_account_error(e)
             raise
         except Exception as e:
             self.logger.error(f"Ошибка парсинга участников из истории чата: {e}")
+            await self._handle_account_error(e)
             raise
         
         return users_data
@@ -346,6 +392,7 @@ class TelegramParser:
         
         except Exception as e:
             self.logger.error(f"Ошибка получения информации о канале: {e}")
+            await self._handle_account_error(e)
             raise
         
         # id привязанного чата
@@ -398,13 +445,16 @@ class TelegramParser:
             print("Вы уже состоите в этом чате.")
         except FloodWaitError as e:
             print(f"Слишком много попыток! Нужно подождать {e.seconds} секунд.")
+            await self._handle_account_error(e)
+            raise
         except Exception as e:
             # Если нужно ждать одобрения
-            if "successfully requested to join" in e:
+            if "successfully requested to join" in str(e):
                 self.logger.warning("Отправлена заявка на вступление.")
                 raise JoinRequestSentError("Нужно ждать одобрения админом")
             
             self.logger.error(f"Критическая ошибка вступления: {e}")
+            await self._handle_account_error(e)
             raise
     
 
@@ -431,7 +481,7 @@ class TelegramParser:
         # Данные
         for row_num, user in enumerate(users_data, 2):
             sheet.cell(row=row_num, column=1, value=user["id"])
-            sheet.cell(row=row_num, column=2, value=f"@{user["username"]}")
+            sheet.cell(row=row_num, column=2, value=f"@{user["username"]}" if user["username"] else "")
             sheet.cell(row=row_num, column=3, value=user["first_name"])
             sheet.cell(row=row_num, column=4, value=user["last_name"])
             sheet.cell(row=row_num, column=5, value=user["phone"])
