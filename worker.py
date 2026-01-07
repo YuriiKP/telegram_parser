@@ -33,12 +33,15 @@ async def process_task(task: ParsingTask):
             return
 
         try:
+            # Обновляем статус задачи как processing
+            await db_manage.update_parsing_task_status(task.id, ParsingTaskStatus.PROCESSING)
+            
             logger.info(f"Попытка {attempt}/{MAX_RETRIES} обработки задачи {task.id} с аккаунтом {account.session}")
 
             # Получаем настройки пользователя
             user = await db_manage.get_user_by_id(task.creator_id)
-            parse_only_active = user.parse_only_active if user else False
-            collect_bio = user.collect_bio if user else False
+            parse_only_active = user.parse_only_active
+            collect_bio = user.collect_bio
 
             # Инициализируем парсер с передачей db_manager для обновления статуса ошибок и task_id для проверки отмены
             async with TelegramParser(

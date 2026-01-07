@@ -317,7 +317,7 @@ class DB_M:
             return result.scalars().all()
 
     async def update_parsing_task_status(self, task_id, status):
-        """Обновить статус задачи парсинга и опционально путь к файлу с результатом"""
+        """Обновить статус задачи парсинга"""
         async with self.async_session() as session:
             result = await session.execute(
                 select(ParsingTask).where(ParsingTask.id == task_id)
