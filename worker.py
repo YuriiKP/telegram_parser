@@ -35,13 +35,17 @@ async def process_task(task: ParsingTask):
         try:
             logger.info(f"Попытка {attempt}/{MAX_RETRIES} обработки задачи {task.id} с аккаунтом {account.session}")
 
+            # Получаем настройки пользователя
+            user = await db_manage.get_user_by_id(task.creator_id)
+            parse_only_active = user.parse_only_active if user else False
+
             # Инициализируем парсер с передачей db_manager для обновления статуса ошибок и task_id для проверки отмены
             async with TelegramParser(
                 session_path=account.session,
                 config_path=account.json,
                 db_manager=db_manage,
-                account_session_path=account.session,
-                task_id=task.id
+                task_id=task.id,
+                parse_only_active=parse_only_active
             ) as parser:
                 
                 # Выбираем метод парсинга в зависимости от типа

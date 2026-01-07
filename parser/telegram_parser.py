@@ -29,11 +29,12 @@ class TelegramParser:
     """
     
     def __init__(
-        self, 
-        session_path: str, 
-        config_path: str = None, 
-        db_manager: DB_M = None, 
-        task_id: int = None
+        self,
+        session_path: str,
+        config_path: str = None,
+        db_manager: DB_M = None,
+        task_id: int = None,
+        parse_only_active: bool = False
     ):
         """
         Инициализация клиента Telegram.
@@ -43,11 +44,13 @@ class TelegramParser:
             config_path (str, optional): Путь к JSON файлу с api_id и api_hash. Defaults to None.
             db_manager: Менеджер БД для обновления статуса аккаунта при ошибках.
             task_id (int): ID задачи парсинга для проверки отмены.
+            parse_only_active (bool): Флаг парсинга только активных пользователей. Defaults to False.
         """
         self.session_path = session_path
         self.config_path = config_path
         self.db_manager = db_manager
         self.task_id = task_id
+        self.parse_only_active = parse_only_active
         
         self.client = None
         self.logger = logging.getLogger(__name__)
@@ -223,7 +226,7 @@ class TelegramParser:
         )
 
 
-    async def parse_users_chat(self, chat: str, limit: int = 10000) -> List[Dict]:
+    async def parse_users_chat(self, chat: str, limit: int = 1000) -> List[Dict]:
         """
         Парсинг участников чата (только если участники чата открыты).
         
@@ -239,7 +242,7 @@ class TelegramParser:
         users_obj = []
         try:
 ################################################################################
-            c = 0
+            # c = 0
 ################################################################################
             async for user in self.client.iter_participants(chat, limit=limit):
                 if user.bot:
@@ -248,15 +251,25 @@ class TelegramParser:
                 # Проверяем отмену
                 await self.check_cancelled()
 
+                # Проверяем, нужно ли собирать пользователя (активность)
+                if not self._should_collect_user(user):
+                    continue
+
                 users_obj.append(user)
 
+                # Анти-флуд задержка, каждые 3000 делаем перерыв
+                if len(users_obj) % 3000 == 0:
+                    sleep = random.uniform(12.0, 16.0)
+                    await asyncio.sleep(sleep)
+                    self.logger.info(f"Задача {self.task_id} | Сбор участников {len(users_obj)} | Перерыв {sleep}")
+
 ################################################################################
-                c += 1 
-                if c == 5:
-                    break
+                # c += 1 
+                # if c == 20:
+                #     break
 ################################################################################    
         
-            await asyncio.sleep(random.uniform(10, 20))
+            await asyncio.sleep(random.uniform(12.0, 16.0))
 
             users_data = []
             for user_obj in users_obj:
@@ -264,13 +277,20 @@ class TelegramParser:
                 await self.check_cancelled()
 
                 # Анти-флуд задержка ПЕРЕД тяжелым запросом
-                await asyncio.sleep(random.uniform(0.1, 0.5))
+                await asyncio.sleep(random.uniform(0.1, 0.2))
+                
 
                 # Получаем полную информацию о пользователе, чтобы достать 'о себе'
                 full_user = await self.client(GetFullUserRequest(user_obj))
                 user_data = await self._extract_user_data(full_user)
                 users_data.append(user_data)
 
+                # Анти-флуд задержка, каждые 50 делаем перерыв
+                if len(users_data) % 30 == 0: 
+                    sleep = random.uniform(12.0, 16.0)
+                    await asyncio.sleep(sleep)
+                    self.logger.info(f"Задача {self.task_id} | Сбор bio {len(users_data)} | Перерыв {sleep}")
+                    
 
         except asyncio.CancelledError:
             self.logger.info(f"Парсинг задачи {self.task_id} отменен")
@@ -322,11 +342,11 @@ class TelegramParser:
             
 ################################################################################
                 c += 1 
-                if c == 5:
+                if c == 20:
                     break
 ################################################################################ 
             
-            await asyncio.sleep(random.uniform(10, 20))
+            await asyncio.sleep(random.uniform(12.0, 16.0))
 
             users_data = []
             for user_obj in users_obj:
@@ -334,11 +354,15 @@ class TelegramParser:
                 await self.check_cancelled()
 
                 # Анти-флуд задержка ПЕРЕД тяжелым запросом
-                await asyncio.sleep(random.uniform(0.1, 0.5))
+                await asyncio.sleep(random.uniform(0.2, 0.5))
 
                 # Получаем полную информацию о пользователе, чтобы достать 'о себе'
                 full_user = await self.client(GetFullUserRequest(user_obj))
                 if full_user.users[0].bot:
+                    continue
+
+                # Проверяем, нужно ли собирать пользователя (активность)
+                if not self._should_collect_user(full_user.users[0]):
                     continue
 
                 user_data = await self._extract_user_data(full_user)
@@ -424,6 +448,39 @@ class TelegramParser:
             return "В этом месяце"
         else:
             return "Давно/Скрыто"
+
+    def _should_collect_user(self, user_obj) -> bool:
+        """
+        Определить, нужно ли собирать пользователя на основе его активности и настроек.
+        
+        Args:
+            user_obj: Объект пользователя из Telethon.
+        
+        Returns:
+            True, если пользователь активный (или настройка parse_only_active выключена).
+        """
+        # Если настройка парсинга только активных пользователей выключена, собираем всех
+        if not self.parse_only_active:
+            return True
+        
+        status = user_obj.status
+        
+        # Всегда собираем пользователей со статусами Online и Recently
+        if isinstance(status, (UserStatusOnline, UserStatusRecently)):
+            return True
+        
+        # Для статуса Offline проверяем, был ли пользователь в сети в последние 48 часов
+        if isinstance(status, UserStatusOffline):
+            from datetime import datetime, timezone
+            if status.was_online:
+                time_diff = datetime.now(timezone.utc) - status.was_online
+                return time_diff.total_seconds() <= 48 * 3600  # 48 часов в секундах
+            else:
+                # Если время неизвестно, считаем неактивным
+                return False
+        
+        # Все остальные статусы (LastWeek, LastMonth, Empty и т.д.) считаем неактивными
+        return False
 
     async def _extract_user_data(self, full_user_result) -> dict:
         """

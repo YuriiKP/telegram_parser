@@ -29,15 +29,14 @@ async def parse_command(query: CallbackQuery, state: FSMContext):
         # Формируем сообщение с информацией об активных задачах
         task_info = "\n".join(
             f"• Задача #{task.id}: {task.status.value} (создана {task.created_at.strftime('%d.%m.%Y %H:%M')})"
-            for task in active_tasks[:3]  # Показываем до 3 задач
-        )
+            for task in active_tasks[:2]  # Показываем до 3 задач
+        )        
         if len(active_tasks) > 3:
             task_info += f"\n• ... и ещё {len(active_tasks) - 3} задач"
         
-        await query.answer(
+        await query.message.edit_text(
             f"⏳ <b>У вас уже есть активная задача парсинга!</b>\n\n"
-            f"Вы можете запустить только одну задачу одновременно.\n"
-            f"Дождитесь завершения текущей задачи или отмените её.\n\n"
+            f"Вы можете запустить только одну задачу одновременно.\n\n"
             f"<b>Активные задачи:</b>\n{task_info}\n\n"
             f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
             reply_markup=user_main_menu(),
@@ -271,7 +270,7 @@ async def process_show_status(message: Message):
         
         text += (
             f"{status_emoji} <b>Задача #{task.id}</b>\n"
-            f"Ссылка: {task.target_url[:50]}...\n"
+            f"Ссылка: {task.target_url}\n"
             f"Статус: {task.status.value}\n"
             f"Создана: {created_time}\n"
             f"{'-' * 30}\n"
