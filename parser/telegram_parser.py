@@ -10,7 +10,7 @@ import openpyxl
 from openpyxl.styles import Font
 
 from telethon import TelegramClient
-from telethon.tl.types import Chat, User, Message, UserFull, PeerUser
+from telethon.tl.types import Chat, User, Message, UserFull, PeerUser, UserStatusOnline, UserStatusOffline, UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth, UserStatusEmpty
 from telethon.errors import FloodWaitError, UserAlreadyParticipantError
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
@@ -33,7 +33,6 @@ class TelegramParser:
         session_path: str, 
         config_path: str = None, 
         db_manager: DB_M = None, 
-        account_session_path: str = None, 
         task_id: int = None
     ):
         """
@@ -43,13 +42,11 @@ class TelegramParser:
             session_path (str): Путь к файлу сессии .session.
             config_path (str, optional): Путь к JSON файлу с api_id и api_hash. Defaults to None.
             db_manager: Менеджер БД для обновления статуса аккаунта при ошибках.
-            account_session_path (str): Путь к сессии аккаунта в БД (для идентификации).
             task_id (int): ID задачи парсинга для проверки отмены.
         """
         self.session_path = session_path
         self.config_path = config_path
         self.db_manager = db_manager
-        self.account_session_path = account_session_path or session_path
         self.task_id = task_id
         
         self.client = None
@@ -115,13 +112,13 @@ class TelegramParser:
             
             # Проверяем, авторизован ли пользователь
             if not await self.client.is_user_authorized():
-                self.logger.error(f"Аккаунт не авторизован: {self.account_session_path}")
+                self.logger.error(f"Аккаунт не авторизован: {self.session_path}")
                 if self.db_manager:
                     await self.db_manager.set_system_account_status(
-                        self.account_session_path,
+                        self.session_path,
                         SystemAccountStatus.AUTH_REQUIRED
                     )
-                raise Exception(f"Аккаунт не авторизован: {self.account_session_path}")
+                raise Exception(f"Аккаунт не авторизован: {self.session_path}")
             
             self.logger.info("Успешное подключение к Telegram API")
         
@@ -134,30 +131,30 @@ class TelegramParser:
             raise
         
         except FloodWaitError as e:
-            self.logger.error(f"FloodWait ошибка для аккаунта {self.account_session_path}: {e}")
+            self.logger.error(f"FloodWait ошибка для аккаунта {self.session_path}: {e}")
             if self.db_manager:
                 await self.db_manager.set_system_account_status(
-                    self.account_session_path,
+                    self.session_path,
                     SystemAccountStatus.FLOOD_WAIT
                 )
             raise
         
         except Exception as e:
-            self.logger.error(f"Ошибка подключения для аккаунта {self.account_session_path}: {e}")
+            self.logger.error(f"Ошибка подключения для аккаунта {self.session_path}: {e}")
             # Проверяем, является ли ошибка связанной с авторизацией
             error_str = str(e).lower()
             
             if any(keyword in error_str for keyword in ['phone', 'auth', 'sign in', 'login', 'session', 'not authorized']):
                 if self.db_manager:
                     await self.db_manager.set_system_account_status(
-                        self.account_session_path,
+                        self.session_path,
                         SystemAccountStatus.AUTH_REQUIRED
                     )
                 raise
             else:
                 if self.db_manager:
                     await self.db_manager.set_system_account_status(
-                        self.account_session_path,
+                        self.session_path,
                         SystemAccountStatus.BANNED
                     )
                 raise
@@ -198,7 +195,7 @@ class TelegramParser:
         # FloodWaitError
         if isinstance(error, FloodWaitError):
             await self.db_manager.set_system_account_status(
-                self.account_session_path,
+                self.session_path,
                 SystemAccountStatus.FLOOD_WAIT
             )
             return
@@ -206,7 +203,7 @@ class TelegramParser:
         # Ошибки авторизации
         if any(keyword in error_str for keyword in ['phone', 'auth', 'sign in', 'login', 'session', 'not authorized']):
             await self.db_manager.set_system_account_status(
-                self.account_session_path,
+                self.session_path,
                 SystemAccountStatus.AUTH_REQUIRED
             )
             return
@@ -214,14 +211,14 @@ class TelegramParser:
         # Другие ошибки, которые могут указывать на бан
         if any(keyword in error_str for keyword in ['banned', 'blocked', 'suspended', 'deleted']):
             await self.db_manager.set_system_account_status(
-                self.account_session_path,
+                self.session_path,
                 SystemAccountStatus.BANNED
             )
             return
         
         # По умолчанию помечаем как BANNED (консервативный подход)
         await self.db_manager.set_system_account_status(
-            self.account_session_path,
+            self.session_path,
             SystemAccountStatus.BANNED
         )
 
@@ -402,6 +399,32 @@ class TelegramParser:
         return await self.parse_users_from_history(chat, limit)
     
 
+    def _get_last_seen(self, user_obj) -> str:
+        """
+        Определение времени последней активности пользователя на основе статуса.
+        
+        Args:
+            user_obj: Объект пользователя из Telethon.
+        
+        Returns:
+            Строка с описанием активности.
+        """
+        status = user_obj.status
+        
+        if isinstance(status, UserStatusOnline):
+            return "В сети"
+        elif isinstance(status, UserStatusOffline):
+            # Здесь возвращается конкретный объект datetime
+            return status.was_online.strftime("%Y-%m-%d %H:%M:%S")
+        elif isinstance(status, UserStatusRecently):
+            return "Недавно"
+        elif isinstance(status, UserStatusLastWeek):
+            return "На этой неделе"
+        elif isinstance(status, UserStatusLastMonth):
+            return "В этом месяце"
+        else:
+            return "Давно/Скрыто"
+
     async def _extract_user_data(self, full_user_result) -> dict:
         """
         Извлечение данных пользователя из результата GetFullUserRequest.
@@ -421,7 +444,8 @@ class TelegramParser:
             "phone": user_obj.phone or "",
             "premium": str(user_obj.premium),
             # "lang_code": user_obj.lang_code or "",
-            "bio": full_info.about or ""
+            "bio": full_info.about or "",
+            "last_seen": self._get_last_seen(user_obj)
         }
         return user_data
     
@@ -473,7 +497,7 @@ class TelegramParser:
         sheet.title = "Users"
         
         # Заголовки
-        headers = ["ID", "Username", "First Name", "Last Name", "Phone", "Premium" "Bio"]
+        headers = ["ID", "Username", "First Name", "Last Name", "Phone", "Premium", "Bio", "Last Seen"]
         for col_num, header in enumerate(headers, 1):
             cell = sheet.cell(row=1, column=col_num, value=header)
             cell.font = Font(bold=True)
@@ -487,6 +511,7 @@ class TelegramParser:
             sheet.cell(row=row_num, column=5, value=user["phone"])
             sheet.cell(row=row_num, column=6, value="Да" if user["premium"] == "True" else "")
             sheet.cell(row=row_num, column=7, value=user["bio"])
+            sheet.cell(row=row_num, column=8, value=user["last_seen"])
         
         # Сохраняем в BytesIO вместо файла на диске
         excel_bytes = io.BytesIO()
