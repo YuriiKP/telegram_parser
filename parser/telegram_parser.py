@@ -222,10 +222,10 @@ class TelegramParser:
             )
             return
         
-        # По умолчанию помечаем как BANNED (консервативный подход)
+        # По умолчанию помечаем как OK
         await self.db_manager.set_system_account_status(
             self.session_path,
-            SystemAccountStatus.BANNED
+            SystemAccountStatus.OK
         )
 
 

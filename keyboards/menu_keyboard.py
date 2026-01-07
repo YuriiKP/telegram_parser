@@ -36,6 +36,17 @@ def user_main_menu():
     return builder.as_markup()
 
 
+def user_parsing_started():
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text=btn_status, callback_data='btn_status')
+    builder.button(text=btn_help, callback_data='btn_help')
+
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+
 def user_buy_menu():
     builder = InlineKeyboardBuilder()
     

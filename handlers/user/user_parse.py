@@ -57,16 +57,19 @@ async def parse_command(query: CallbackQuery, state: FSMContext):
     builder.button(text="👥 Парсинг участников чата", callback_data='parsing_type_chat_members')
     builder.button(text="✍️ Парсинг писавших в чат", callback_data='parsing_type_chat_writers')
     builder.button(text="💬 Парсинг комментаторов канала", callback_data='parsing_type_channel_commenters')
-    builder.button(text=f"🎯 Только активных: {parse_only_active_text}", callback_data='btn_only_active')
-    builder.button(text=f"📝 Сбор био: {collect_bio_text}", callback_data='btn_collect_bio')
-    builder.button(text=btn_back, callback_data='btn_main_menu')
-    builder.adjust(1)
+    builder.button(text=f"Только активных: {parse_only_active_text}", callback_data='btn_only_active')
+    builder.button(text=f"Сбор био: {collect_bio_text}", callback_data='btn_collect_bio')
+    builder.button(text=btn_main_menu, callback_data='btn_main_menu')
+    builder.adjust(1, 1, 1, 2, 1)
     
     await query.message.edit_text(
-        f"Выберите тип парсинга:\n\n"
+        f"<b>Выберите тип парсинга:</b>\n\n"
         f"<b>Настройки:</b>\n"
-        f"• Только активных: {parse_only_active_text}\n"
-        f"• Сбор био: {collect_bio_text}",
+        f"    • 🎯 Только активных: {parse_only_active_text}\n"
+        f"    • 📝 Сбор био: {collect_bio_text}\n\n "
+        "<i>— 'Только активных' - Собираются те, кто был в сети максимум 1-2 дня назад.\n"
+        "— При активной настройке 'Сбор био' собираются описания профиля. "
+        "Из-за ограничений Телеграм время парсинга увеличивается. 1000 пользователей - около 19 минут.</i>",
         reply_markup=builder.as_markup()
     )
 
@@ -181,7 +184,7 @@ async def process_parsing_link(message: Message, state: FSMContext):
             f"<b>Ссылка:</b> {link}\n\n"
             f"Статус можно проверить кнопкой <b>\"Статус задач\"</b> или командой /status\n"
             f"Ожидайте уведомления о завершения.",
-            reply_markup=user_main_menu(),
+            reply_markup=user_parsing_started(),
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
