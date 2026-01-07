@@ -21,6 +21,7 @@ class User(Base):
     language = Column(String(2), default='ru')
     subscription_end = Column(DateTime, nullable=True)
     parse_only_active = Column(Boolean, default=False, nullable=False)
+    collect_bio = Column(Boolean, default=False, nullable=False)
 
 
 

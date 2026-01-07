@@ -34,7 +34,8 @@ class TelegramParser:
         config_path: str = None,
         db_manager: DB_M = None,
         task_id: int = None,
-        parse_only_active: bool = False
+        parse_only_active: bool = False,
+        collect_bio: bool = False
     ):
         """
         Инициализация клиента Telegram.
@@ -45,12 +46,14 @@ class TelegramParser:
             db_manager: Менеджер БД для обновления статуса аккаунта при ошибках.
             task_id (int): ID задачи парсинга для проверки отмены.
             parse_only_active (bool): Флаг парсинга только активных пользователей. Defaults to False.
+            collect_bio (bool): Флаг сбора биографии пользователей (поле "о себе"). Defaults to False.
         """
         self.session_path = session_path
         self.config_path = config_path
         self.db_manager = db_manager
         self.task_id = task_id
         self.parse_only_active = parse_only_active
+        self.collect_bio = collect_bio
         
         self.client = None
         self.logger = logging.getLogger(__name__)
@@ -226,7 +229,7 @@ class TelegramParser:
         )
 
 
-    async def parse_users_chat(self, chat: str, limit: int = 1000) -> List[Dict]:
+    async def parse_users_chat(self, chat: str, limit: int = 500) -> List[Dict]:
         """
         Парсинг участников чата (только если участники чата открыты).
         
@@ -259,9 +262,9 @@ class TelegramParser:
 
                 # Анти-флуд задержка, каждые 3000 делаем перерыв
                 if len(users_obj) % 3000 == 0:
-                    sleep = random.uniform(12.0, 16.0)
+                    sleep = random.uniform(17.0, 19.0)
                     await asyncio.sleep(sleep)
-                    self.logger.info(f"Задача {self.task_id} | Сбор участников {len(users_obj)} | Перерыв {sleep}")
+                    self.logger.info(f"Задача {self.task_id} | Сбор участников {len(users_obj)} | Перерыв {sleep}с")
 
 ################################################################################
                 # c += 1 
@@ -269,28 +272,26 @@ class TelegramParser:
                 #     break
 ################################################################################    
         
-            await asyncio.sleep(random.uniform(12.0, 16.0))
+            await asyncio.sleep(random.uniform(17.0, 19.0))
 
             users_data = []
             for user_obj in users_obj:
                 # Проверяем отмену
                 await self.check_cancelled()
 
-                # Анти-флуд задержка ПЕРЕД тяжелым запросом
-                await asyncio.sleep(random.uniform(0.1, 0.2))
-                
+                # Сбор bio, если нужно  
+                if self.collect_bio:
+                    await asyncio.sleep(random.uniform(0.7, 0.8))
+                    # Получаем полную информацию о пользователе, чтобы достать 'о себе'
+                    full_user = await self.client(GetFullUserRequest(user_obj))
+                    user_data = await self._extract_user_data(full_user)
 
-                # Получаем полную информацию о пользователе, чтобы достать 'о себе'
-                full_user = await self.client(GetFullUserRequest(user_obj))
-                user_data = await self._extract_user_data(full_user)
+                    if len(users_data) % 100 == 0:
+                        self.logger.info(f"Задача {self.task_id} | Сбор данных {len(users_data)}")
+                else:
+                    # Используем только базовую информацию
+                    user_data = await self._extract_user_data(user_obj)
                 users_data.append(user_data)
-
-                # Анти-флуд задержка, каждые 50 делаем перерыв
-                if len(users_data) % 30 == 0: 
-                    sleep = random.uniform(12.0, 16.0)
-                    await asyncio.sleep(sleep)
-                    self.logger.info(f"Задача {self.task_id} | Сбор bio {len(users_data)} | Перерыв {sleep}")
-                    
 
         except asyncio.CancelledError:
             self.logger.info(f"Парсинг задачи {self.task_id} отменен")
@@ -313,7 +314,7 @@ class TelegramParser:
         return users_data
     
 
-    async def parse_users_from_history(self, chat: str, limit: int = 10000) -> List[Dict]:
+    async def parse_users_from_history(self, chat: str, limit: int = 1000) -> List[Dict]:
         """
         Парсинг участников из истории сообщений чата.
         
@@ -330,7 +331,7 @@ class TelegramParser:
         seen_users = set()
         try:
 ################################################################################
-            c = 0
+            # c = 0
 ################################################################################
             async for comment in self.client.iter_messages(entity=chat, limit=limit):
                 # Проверяем отмену каждые 10 сообщений
@@ -339,36 +340,52 @@ class TelegramParser:
                 if isinstance(comment.from_id, PeerUser) and comment.from_id.user_id not in seen_users:
                     seen_users.add(comment.from_id.user_id)
                     users_obj.append(comment.from_id) # Здесь добавляю объекты в список, чтобы можно было дальше получить информацию, просто по id это не получится
-            
+
+                # Анти-флуд задержка, каждые 3000 делаем перерыв
+                if len(users_obj) % 3000 == 0:
+                    sleep = random.uniform(17.0, 19.0)
+                    await asyncio.sleep(sleep)
+                    self.logger.info(f"Задача {self.task_id} | Сбор участников {len(users_obj)} | Перерыв {sleep}с")
+
 ################################################################################
-                c += 1 
-                if c == 20:
-                    break
+                # c += 1 
+                # if c == 20:
+                #     break
 ################################################################################ 
             
             await asyncio.sleep(random.uniform(12.0, 16.0))
 
             users_data = []
-            for user_obj in users_obj:
+            for peer_user in users_obj:
                 # Проверяем отмену
                 await self.check_cancelled()
 
-                # Анти-флуд задержка ПЕРЕД тяжелым запросом
-                await asyncio.sleep(random.uniform(0.2, 0.5))
-
-                # Получаем полную информацию о пользователе, чтобы достать 'о себе'
-                full_user = await self.client(GetFullUserRequest(user_obj))
-                if full_user.users[0].bot:
+                # Сбор bio, если нужно 
+                if self.collect_bio:
+                    await asyncio.sleep(random.uniform(0.7, 0.8))
+                    # Получаем полную информацию о пользователе
+                    full_user = await self.client(GetFullUserRequest(peer_user))
+                    user = full_user.users[0]
+                    full_info = full_user.full_user
+                else:
+                    await asyncio.sleep(random.uniform(0.1, 0.2))
+                    # Получаем только базовую информацию
+                    user = await self.client.get_entity(peer_user)
+                    full_info = None
+                
+                if user.bot:
                     continue
 
                 # Проверяем, нужно ли собирать пользователя (активность)
-                if not self._should_collect_user(full_user.users[0]):
+                if not self._should_collect_user(user):
                     continue
 
-                user_data = await self._extract_user_data(full_user)
+                user_data = await self._extract_user_data(user, full_info)
                 users_data.append(user_data)
 
-        
+                if len(users_data) % 100 == 0:
+                    self.logger.info(f"Задача {self.task_id} | Сбор данных {len(users_data)}")
+
         except asyncio.CancelledError:
             self.logger.info(f"Парсинг задачи {self.task_id} отменен")
             raise
@@ -482,17 +499,27 @@ class TelegramParser:
         # Все остальные статусы (LastWeek, LastMonth, Empty и т.д.) считаем неактивными
         return False
 
-    async def _extract_user_data(self, full_user_result) -> dict:
+    async def _extract_user_data(self, user_obj, full_info=None) -> dict:
         """
-        Извлечение данных пользователя из результата GetFullUserRequest.
+        Извлечение данных пользователя.
         
+        Args:
+            user_obj: Объект пользователя из Telethon (тип User) или результат GetFullUserRequest.
+            full_info: Объект расширенной информации UserFull (optional).
+        
+        Returns:
+            dict: Словарь с данными пользователя.
         """
-        # Базовый объект пользователя (имя, юзернейм, телефон)
-        user_obj = full_user_result.users[0]
+        # Обработка обратной совместимости: если передан full_user_result (имеет атрибут users)
+        if hasattr(user_obj, 'users') and hasattr(user_obj, 'full_user'):
+            # Это результат GetFullUserRequest
+            full_info = user_obj.full_user
+            user_obj = user_obj.users[0]
         
-        # Объект расширенной информации (about)
-        full_info = full_user_result.full_user
-
+        bio = ""
+        if full_info and hasattr(full_info, 'about'):
+            bio = full_info.about or ""
+        
         user_data = {
             "id": user_obj.id,
             "username": user_obj.username or "",
@@ -501,7 +528,7 @@ class TelegramParser:
             "phone": user_obj.phone or "",
             "premium": str(user_obj.premium),
             # "lang_code": user_obj.lang_code or "",
-            "bio": full_info.about or "",
+            "bio": bio,
             "last_seen": self._get_last_seen(user_obj)
         }
         return user_data

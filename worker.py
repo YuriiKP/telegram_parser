@@ -38,6 +38,7 @@ async def process_task(task: ParsingTask):
             # Получаем настройки пользователя
             user = await db_manage.get_user_by_id(task.creator_id)
             parse_only_active = user.parse_only_active if user else False
+            collect_bio = user.collect_bio if user else False
 
             # Инициализируем парсер с передачей db_manager для обновления статуса ошибок и task_id для проверки отмены
             async with TelegramParser(
@@ -45,7 +46,8 @@ async def process_task(task: ParsingTask):
                 config_path=account.json,
                 db_manager=db_manage,
                 task_id=task.id,
-                parse_only_active=parse_only_active
+                parse_only_active=parse_only_active,
+                collect_bio=collect_bio
             ) as parser:
                 
                 # Выбираем метод парсинга в зависимости от типа

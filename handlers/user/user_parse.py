@@ -50,20 +50,23 @@ async def parse_command(query: CallbackQuery, state: FSMContext):
     
     # Получаем текущую настройку пользователя
     user = await db_manage.get_user_by_id(query.from_user.id)
-    parse_only_active_text = "ВКЛ" if user.parse_only_active else "ВЫКЛ"
+    parse_only_active_text = "✅" if user.parse_only_active else "❌"
+    collect_bio_text = "✅" if user.collect_bio else "❌"
     
     builder = InlineKeyboardBuilder()
     builder.button(text="👥 Парсинг участников чата", callback_data='parsing_type_chat_members')
     builder.button(text="✍️ Парсинг писавших в чат", callback_data='parsing_type_chat_writers')
     builder.button(text="💬 Парсинг комментаторов канала", callback_data='parsing_type_channel_commenters')
     builder.button(text=f"🎯 Только активных: {parse_only_active_text}", callback_data='btn_only_active')
+    builder.button(text=f"📝 Сбор био: {collect_bio_text}", callback_data='btn_collect_bio')
     builder.button(text=btn_back, callback_data='btn_main_menu')
     builder.adjust(1)
     
     await query.message.edit_text(
         f"Выберите тип парсинга:\n\n"
         f"<b>Настройки:</b>\n"
-        f"• Только активных: {parse_only_active_text}",
+        f"• Только активных: {parse_only_active_text}\n"
+        f"• Сбор био: {collect_bio_text}",
         reply_markup=builder.as_markup()
     )
 
@@ -81,6 +84,19 @@ async def toggle_only_active_handler(query: CallbackQuery, state: FSMContext):
     await parse_command(query, state)
     
 
+@dp.callback_query(F.data == 'btn_collect_bio')
+async def toggle_collect_bio_handler(query: CallbackQuery, state: FSMContext):
+    """Обработка переключения настройки 'Сбор био'"""
+    # Получаем пользователя
+    user = await db_manage.get_user_by_id(query.from_user.id)
+    
+    # Инвертируем текущее значение
+    new_value = not user.collect_bio
+    await db_manage.update_user(query.from_user.id, collect_bio=new_value)
+
+    await parse_command(query, state)
+    
+    
 
 @dp.callback_query(F.data.startswith('parsing_type_'))
 async def process_parsing_type_selection(query: CallbackQuery, state: FSMContext):
