@@ -25,12 +25,14 @@ async def parse_command(query: CallbackQuery, state: FSMContext):
     
     # Проверяем, есть ли у пользователя активные задачи (NEW или PROCESSING)
     active_tasks = await db_manage.get_active_parsing_tasks_by_user(query.message.chat.id)
+    # Получаем пользователя для меню
+    user = await db_manage.get_user_by_id(query.from_user.id)
     if active_tasks:
         # Формируем сообщение с информацией об активных задачах
         task_info = "\n".join(
             f"• Задача #{task.id}: {task.status.value} (создана {task.created_at.strftime('%d.%m.%Y %H:%M')})"
             for task in active_tasks[:2]  # Показываем до 3 задач
-        )        
+        )
         if len(active_tasks) > 3:
             task_info += f"\n• ... и ещё {len(active_tasks) - 3} задач"
         
@@ -39,7 +41,7 @@ async def parse_command(query: CallbackQuery, state: FSMContext):
             f"Вы можете запустить только одну задачу одновременно.\n\n"
             f"<b>Активные задачи:</b>\n{task_info}\n\n"
             f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
-            reply_markup=user_main_menu(),
+            reply_markup=user_main_menu(user),
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         return
@@ -189,10 +191,11 @@ async def process_parsing_link(message: Message, state: FSMContext):
         )
         
     except Exception as e:
+        user = await db_manage.get_user_by_id(message.from_user.id)
         await message.answer(
             f"❌ Ошибка при создании задачи:\n"
             f"Попробуйте позже или обратитесь в поддержку.",
-            reply_markup=user_main_menu()
+            reply_markup=user_main_menu(user)
         )
         logger.error(f"Ошибка при создании задачи: {str(e)}")
 
@@ -204,11 +207,12 @@ async def inline_cancel_task_command(query: CallbackQuery, state: FSMContext):
     
     # Получаем активные задачи пользователя
     active_tasks = await db_manage.get_active_parsing_tasks_by_user(query.from_user.id)
+    user = await db_manage.get_user_by_id(query.from_user.id)
     if not active_tasks:
         await query.message.edit_text(
             "📭 <b>Нет активных задач для отмены.</b>\n\n"
             "У вас нет запущенных задач парсинга (NEW или PROCESSING).",
-            reply_markup=user_main_menu()
+            reply_markup=user_main_menu(user)
         )
         return
     
@@ -239,7 +243,7 @@ async def inline_cancel_task_command(query: CallbackQuery, state: FSMContext):
     
     await query.message.edit_text(
         response,
-        reply_markup=user_main_menu()
+        reply_markup=user_main_menu(user)
     )
 
 

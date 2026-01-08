@@ -93,12 +93,12 @@ async def process_start_bot(message: Message, user_id, first_name):
     try:
         await message.edit_text(
             text=user_start_message(),
-            reply_markup=user_main_menu()
+            reply_markup=user_main_menu(user)
         )
     except TelegramBadRequest:
         await message.answer(
             text=user_start_message(),
-            reply_markup=user_main_menu()
+            reply_markup=user_main_menu(user)
         )
         try:
             if message.text != '/start':

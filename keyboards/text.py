@@ -1,3 +1,7 @@
+from datetime import datetime
+
+
+
 # Кнопки админов
 btn_admins = '🔑 Админы'
 btn_about_users_bot = '👥 Пользователи'
@@ -14,6 +18,7 @@ btn_main_menu = '🏠 Главное меню'
 
 btn_buy = '💳 Купить'
 btn_subscription = '💎 Подписка'
+btn_profile = '👤 Профиль'
 btn_buy_one_month = '🟢 1 месяц - 1⭐️ | 2₽'
 btn_help = '🆘 Помощь'
 btn_parse = '🔍 Парсинг'
@@ -48,6 +53,36 @@ user_help_text = '''
 
 Поддержка: Прямая связь с администратором @foteleg_b. Пишите, разберемся.
 
-Открыт к предложениям и пожеланиям! Если у вас есть идеи по улучшению бота 
+Открыт к предложениям и пожеланиям! Если у вас есть идеи по улучшению бота
 или новые функции, которые хотели бы видеть - сообщите. Постараюсь реализовать их в боте.
 '''
+
+
+def user_profile_text(user):
+    """Формирует текст профиля пользователя."""    
+    user_id = user.user_id
+    subscription_end = user.subscription_end
+    
+    if subscription_end is None:
+        subscription_info = "❌ Подписка отсутствует"
+    else:
+        now = datetime.now()
+        if subscription_end >= now:
+            # активная подписка
+            remaining = subscription_end - now
+            days = remaining.days
+            hours = remaining.seconds // 3600
+            minutes = (remaining.seconds % 3600) // 60
+            subscription_info = (
+                f"✅ Подписка активна до {subscription_end.strftime('%Y.%m.%d. %H:%M')}\n"
+                f"  • Осталось: {days} дн., {hours} ч., {minutes} мин."
+            )
+        else:
+            subscription_info = f"❌ Подписка истекла {subscription_end.strftime('%d.%m.%Y %H:%M')}"
+    
+    return (
+        f"👤 <b>Профиль пользователя</b>\n\n"
+        f"🆔 ID: {user_id}\n"
+        f"📅 Дата регистрации: {user.reg_time.strftime('%d.%m.%Y %H:%M') if user.reg_time else 'неизвестно'}\n"
+        f"{subscription_info}"
+    )
