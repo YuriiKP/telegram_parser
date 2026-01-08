@@ -29,7 +29,7 @@ def user_main_menu():
     
     builder.button(text=btn_parse, callback_data='btn_parse')
     builder.button(text=btn_status, callback_data='btn_status')
-    builder.button(text=btn_buy, callback_data='btn_buy')
+    builder.button(text=btn_subscription, callback_data='btn_subscription')
     builder.button(text=btn_help, callback_data='btn_help')
 
     builder.adjust(1, 1, 2)
@@ -50,7 +50,7 @@ def user_parsing_started():
 def user_buy_menu():
     builder = InlineKeyboardBuilder()
     
-    builder.button(text=btn_buy, callback_data='btn_buy_one_month')
+    builder.button(text=btn_buy_one_month, callback_data='btn_buy_one_month')
     builder.button(text=btn_main_menu, callback_data='btn_main_menu')
 
     builder.adjust(1)

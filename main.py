@@ -16,8 +16,8 @@ async def main():
     await db_manage.create_tables()
     
     # Регистрируем middleware для проверки подписки
-    # dp.message.outer_middleware(SubscriptionMiddleware(db_manage))
-    # dp.callback_query.outer_middleware(SubscriptionMiddleware(db_manage))
+    dp.message.outer_middleware(SubscriptionMiddleware(db_manage))
+    dp.callback_query.outer_middleware(SubscriptionMiddleware(db_manage))
     
     # Запускаем фоновую проверку подписок в отдельной задаче
     asyncio.create_task(start_subscription_checker())

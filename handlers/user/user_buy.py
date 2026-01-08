@@ -8,7 +8,7 @@ from keyboards import *
 
 
 # Обработчик кнопки "Купить"
-@dp.callback_query(F.data == 'btn_buy')
+@dp.callback_query(F.data == 'btn_subscription')
 async def buy_handler(query: CallbackQuery, state: FSMContext):
     await state.clear()
 
@@ -45,7 +45,7 @@ async def buy_one_month_handler(query: CallbackQuery, state: FSMContext):
         currency="XTR",              # Код валюты для звезд тг
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"Оплатить 1 ⭐️ | 2₽", pay=True)],
-            [InlineKeyboardButton(text="Отмена", callback_data="btn_buy")]
+            [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
         ])
     )
 
