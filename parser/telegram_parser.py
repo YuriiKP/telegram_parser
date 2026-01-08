@@ -229,7 +229,7 @@ class TelegramParser:
         )
 
 
-    async def parse_users_chat(self, chat: str, limit: int = 500) -> List[Dict]:
+    async def parse_users_chat(self, chat: str, limit: int = 10000) -> List[Dict]:
         """
         Парсинг участников чата (только если участники чата открыты).
         
@@ -314,7 +314,7 @@ class TelegramParser:
         return users_data
     
 
-    async def parse_users_from_history(self, chat: str, limit: int = 1000) -> List[Dict]:
+    async def parse_users_from_history(self, chat: str, limit: int = 20000) -> List[Dict]:
         """
         Парсинг участников из истории сообщений чата.
         
