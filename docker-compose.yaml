@@ -4,17 +4,14 @@ services:
     container_name: bot
     volumes:
       - bot_data:/data
+      - accounts:/accounts
     # depends_on:
     #   - db
-    develop:
-      watch:
-        - action: sync+restart
-          path: .
-          target: /bot
 
 
 volumes:
   bot_data:
+  accounts:
 
 #   db: 
 #     image: postgres
