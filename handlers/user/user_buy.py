@@ -56,8 +56,11 @@ async def buy_one_month_handler(query: CallbackQuery, state: FSMContext):
 async def pay_with_card_handler(query: CallbackQuery, state: FSMContext):
     await state.clear()
     
-    # Цена в копейках
+    # Цена в копейках (2 рубля = 200 копеек)
     prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=10000)]
+    
+    # provider_data для ЮKassa с указанием метода оплаты СБП
+    # provider_data = '{"payment_method_type": "sbp"}'
     
     # Отправляем инвойс с провайдером ЮKassa
     await query.message.answer_invoice(
@@ -67,6 +70,7 @@ async def pay_with_card_handler(query: CallbackQuery, state: FSMContext):
         payload="one_month",         # id тарифа
         currency="RUB",              # Код валюты для рублёвых платежей
         provider_token=YOO_KASSA_PROVIDER_TOKEN,
+        # provider_data=provider_data,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Оплатить 100 ₽", pay=True)],
             [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
@@ -119,6 +123,8 @@ async def success_payment_handler(message: Message):
             new_end = now + timedelta(days=30)
         
         await db_manage.update_user(user_id, subscription_end=new_end)
+        # Меняю в объекте, чтобы получить нужное меню после оплаты
+        user.subscription_end = new_end
 
         # Сохраняем информацию о платеже в базе данных
         await db_manage.add_payment(
