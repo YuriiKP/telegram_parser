@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from aiogram.types import CallbackQuery, Message, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
@@ -34,12 +35,12 @@ async def buy_one_month_handler(query: CallbackQuery, state: FSMContext):
     await state.clear()
     
     # 1. Формируем цену
-    prices = [LabeledPrice(label="1 месяц VPN", amount=1)] 
+    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=1)] 
 
     # 2. Отправляем инвойс
     await query.message.answer_invoice(
         title="Подписка на 1 месяц",
-        description="ЖКХ подписка на 30 дней",
+        description="Вы получаете полный доступ к парсеру",
         prices=prices,
         payload="one_month",         # id тарифа
         currency="XTR",              # Код валюты для звезд тг
@@ -60,9 +61,17 @@ async def success_payment_handler(message: Message):
     if payment_info.invoice_payload == "one_month":
         user_id = message.from_user.id
         
-        #
-        # Здесь кака-то логика с заказом
-        #
+        # Продление подписки на 30 дней
+        user = await db_manage.get_user_by_id(user_id)
+        now = datetime.now()
+        if user.subscription_end and user.subscription_end > now:
+            # Если подписка активна, продлеваем от текущей даты окончания
+            new_end = user.subscription_end + timedelta(days=30)
+        else:
+            # Иначе устанавливаем подписку от текущего момента
+            new_end = now + timedelta(days=30)
+        
+        await db_manage.update_user(user_id, subscription_end=new_end)
 
         # Сохраняем информацию о платеже в базе данных
         await db_manage.add_payment(
@@ -77,10 +86,6 @@ async def success_payment_handler(message: Message):
 
         await message.answer("Оплата прошла успешно! Ваша подписка обновлена. 🚀")
         await message.answer(
-            text='Забирай мешок картошки',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=
-                    [
-                        [InlineKeyboardButton(text=btn_main_menu, callback_data='btn_main_menu')],
-                    ]
-                )
-            )
+            text=user_start_message(),
+            reply_markup=user_main_menu(user)
+        )

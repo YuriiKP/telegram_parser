@@ -24,6 +24,10 @@ class SubscriptionMiddleware(BaseMiddleware):
         event: Message | CallbackQuery,
         data: Dict[str, Any]
     ) -> Any:
+        # Пропускаем если это оплата пропускаем
+        if hasattr(event, 'successful_payment'):
+            return await handler(event, data)
+
         # Получаем user_id из события
         if isinstance(event, Message):
             user_id = event.from_user.id
