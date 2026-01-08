@@ -17,7 +17,7 @@ admin_main_menu_text = 'Админ меню'
 btn_main_menu = '🏠 Главное меню'
 
 btn_buy = '💳 Купить'
-btn_subscription = '💎 Подписка'
+# btn_subscription = '💎 Подписка'
 btn_profile = '👤 Профиль'
 btn_buy_one_month = '🟢 1 месяц'
 btn_pay_with_card = '💳 Картой РФ'

@@ -9,7 +9,7 @@ from keyboards import *
 
 
 # Обработчик кнопки "Купить"
-@dp.callback_query(F.data == 'btn_subscription')
+@dp.callback_query(F.data == 'btn_buy')
 async def buy_handler(query: CallbackQuery, state: FSMContext):
     await state.clear()
 
@@ -73,7 +73,7 @@ async def pay_with_card_handler(query: CallbackQuery, state: FSMContext):
         # provider_data=provider_data,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Оплатить 590 ₽", pay=True)],
-            [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
+            [InlineKeyboardButton(text="Отмена", callback_data="btn_buy")]
         ])
     )
     
@@ -97,7 +97,7 @@ async def pay_with_stars_handler(query: CallbackQuery, state: FSMContext):
         provider_token='',           # Для Stars передаем пустую строку
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Оплатить 329 ⭐️", pay=True)],
-            [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
+            [InlineKeyboardButton(text="Отмена", callback_data="btn_buy")]
         ])
     )
     

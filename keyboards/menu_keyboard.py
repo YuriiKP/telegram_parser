@@ -41,7 +41,7 @@ def user_main_menu(user: User = None):
         builder.button(text=btn_status, callback_data='btn_status')
         builder.button(text=btn_profile, callback_data='btn_profile')
     else:
-        builder.button(text=btn_subscription, callback_data='btn_subscription')
+        builder.button(text=btn_buy, callback_data='btn_buy')
         builder.button(text=btn_parse, callback_data='btn_parse')
         builder.button(text=btn_status, callback_data='btn_status')    
 
@@ -78,7 +78,7 @@ def user_payment_method_menu():
     
     builder.button(text=btn_pay_with_card, callback_data='btn_pay_with_card')
     builder.button(text=btn_pay_with_stars, callback_data='btn_pay_with_stars')
-    builder.button(text=btn_back, callback_data='btn_subscription')
+    builder.button(text=btn_back, callback_data='btn_buy')
 
     builder.adjust(1)
     return builder.as_markup()
