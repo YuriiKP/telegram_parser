@@ -19,7 +19,9 @@ btn_main_menu = '🏠 Главное меню'
 btn_buy = '💳 Купить'
 btn_subscription = '💎 Подписка'
 btn_profile = '👤 Профиль'
-btn_buy_one_month = '🟢 1 месяц - 1⭐️ | 2₽'
+btn_buy_one_month = '🟢 1 месяц'
+btn_pay_with_card = '💳 СБП и картой'
+btn_pay_with_stars = '⭐️ Звездами'
 btn_help = '🆘 Помощь'
 btn_parse = '🔍 Парсинг'
 btn_status = '📊 Статус задач'
@@ -45,6 +47,12 @@ user_buy_text = (
     '<b>Месяц</b>\n'
     '    • 30 дней доступа\n'
     '    • Все функции'
+)
+
+payment_method_text = (
+    '<b>Выберите способ оплаты</b>\n\n'
+    '💳 <b>СБП и картой</b> – оплата через ЮKassa\n'
+    '⭐️ <b>Звездами</b> – оплата через Telegram Stars'
 )
 
 

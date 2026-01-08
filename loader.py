@@ -26,6 +26,7 @@ load_dotenv()
 TG_TOKEN = os.getenv('TG_TOKEN')
 TG_ADMIN = os.getenv('TG_ADMIN')
 SQLALCHEMY_DATABASE_URL_TG = os.getenv('SQLALCHEMY_DATABASE_URL_TG')
+YOO_KASSA_PROVIDER_TOKEN = os.getenv('YOO_KASSA_PROVIDER_TOKEN')
 
 
 bot = Bot(TG_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))

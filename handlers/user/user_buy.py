@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 from aiogram import F
 
-from loader import dp, db_manage
+from loader import dp, db_manage, YOO_KASSA_PROVIDER_TOKEN
 from keyboards import *
 
 
@@ -34,22 +34,69 @@ async def buy_handler(query: CallbackQuery, state: FSMContext):
 async def buy_one_month_handler(query: CallbackQuery, state: FSMContext):
     await state.clear()
     
-    # 1. Формируем цену
-    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=1)] 
+    # Показываем меню выбора способа оплаты
+    try:
+        await query.message.edit_text(
+            text=payment_method_text,
+            reply_markup=user_payment_method_menu()
+        )
+    except TelegramBadRequest:
+        # Если нельзя редактировать, отправляем новое сообщение и удаляем старое
+        await query.message.answer(
+            text=payment_method_text,
+            reply_markup=user_payment_method_menu()
+        )
+        try:
+            await query.message.delete()
+        except TelegramBadRequest:
+            pass  # Игнорируем, если уже удалено
 
-    # 2. Отправляем инвойс
+
+@dp.callback_query(F.data == 'btn_pay_with_card')
+async def pay_with_card_handler(query: CallbackQuery, state: FSMContext):
+    await state.clear()
+    
+    # Цена в копейках
+    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=10000)]
+    
+    # Отправляем инвойс с провайдером ЮKassa
     await query.message.answer_invoice(
         title="Подписка на 1 месяц",
         description="Вы получаете полный доступ к парсеру",
         prices=prices,
         payload="one_month",         # id тарифа
-        currency="XTR",              # Код валюты для звезд тг
+        currency="RUB",              # Код валюты для рублёвых платежей
+        provider_token=YOO_KASSA_PROVIDER_TOKEN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"Оплатить 1 ⭐️ | 2₽", pay=True)],
+            [InlineKeyboardButton(text="Оплатить 100 ₽", pay=True)],
             [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
         ])
     )
+    
+    await query.message.delete()
 
+
+@dp.callback_query(F.data == 'btn_pay_with_stars')
+async def pay_with_stars_handler(query: CallbackQuery, state: FSMContext):
+    await state.clear()
+    
+    # Цена в звездах (1 звезда)
+    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=1)]
+    
+    # Отправляем инвойс для Telegram Stars
+    await query.message.answer_invoice(
+        title="Подписка на 1 месяц",
+        description="Вы получаете полный доступ к парсеру",
+        prices=prices,
+        payload="one_month",         # id тарифа
+        currency="XTR",              # Код валюты для Telegram Stars
+        provider_token='',           # Для Stars передаем пустую строку
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Оплатить 1 ⭐️ | 2₽", pay=True)],
+            [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
+        ])
+    )
+    
     await query.message.delete()
 
 
