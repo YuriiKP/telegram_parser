@@ -57,7 +57,7 @@ async def pay_with_card_handler(query: CallbackQuery, state: FSMContext):
     await state.clear()
     
     # Цена в копейках (2 рубля = 200 копеек)
-    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=10000)]
+    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=59000)]
     
     # provider_data для ЮKassa с указанием метода оплаты СБП
     # provider_data = '{"payment_method_type": "sbp"}'
@@ -72,7 +72,7 @@ async def pay_with_card_handler(query: CallbackQuery, state: FSMContext):
         provider_token=YOO_KASSA_PROVIDER_TOKEN,
         # provider_data=provider_data,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Оплатить 100 ₽", pay=True)],
+            [InlineKeyboardButton(text="Оплатить 590 ₽", pay=True)],
             [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
         ])
     )
@@ -85,7 +85,7 @@ async def pay_with_stars_handler(query: CallbackQuery, state: FSMContext):
     await state.clear()
     
     # Цена в звездах (1 звезда)
-    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=1)]
+    prices = [LabeledPrice(label="Доступ к парсеру на 1 месяц", amount=329)]
     
     # Отправляем инвойс для Telegram Stars
     await query.message.answer_invoice(
@@ -96,7 +96,7 @@ async def pay_with_stars_handler(query: CallbackQuery, state: FSMContext):
         currency="XTR",              # Код валюты для Telegram Stars
         provider_token='',           # Для Stars передаем пустую строку
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Оплатить 1 ⭐️ | 2₽", pay=True)],
+            [InlineKeyboardButton(text="Оплатить 329 ⭐️", pay=True)],
             [InlineKeyboardButton(text="Отмена", callback_data="btn_subscription")]
         ])
     )

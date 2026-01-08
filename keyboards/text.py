@@ -20,7 +20,7 @@ btn_buy = '💳 Купить'
 btn_subscription = '💎 Подписка'
 btn_profile = '👤 Профиль'
 btn_buy_one_month = '🟢 1 месяц'
-btn_pay_with_card = '💳 СБП и картой'
+btn_pay_with_card = '💳 Картой РФ'
 btn_pay_with_stars = '⭐️ Звездами'
 btn_help = '🆘 Помощь'
 btn_parse = '🔍 Парсинг'
@@ -45,13 +45,14 @@ def user_start_message():
 user_buy_text = (
     '<b>Доступные подписки</b>\n\n'
     '<b>Месяц</b>\n'
+    '    • 590 ₽\n'
     '    • 30 дней доступа\n'
     '    • Все функции'
 )
 
 payment_method_text = (
     '<b>Выберите способ оплаты</b>\n\n'
-    '💳 <b>СБП и картой</b> – оплата через ЮKassa\n'
+    '💳 <b>Картой РФ</b> – оплата через ЮKassa\n'
     '⭐️ <b>Звездами</b> – оплата через Telegram Stars'
 )
 
