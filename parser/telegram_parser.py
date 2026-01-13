@@ -439,6 +439,104 @@ class TelegramParser:
             return []
         return await self.parse_users_from_history(chat, limit)
     
+    
+    async def parse_channel_subscribers(self, channel: str, limit: int = 10000) -> List[Dict]:
+        """
+        Парсинг подписчиков канала.
+        
+        Args:
+            channel (str): ссылка на канал.
+            limit (int): Максимальное количество подписчиков для парсинга.
+        
+        Returns:
+            List[Dict]: Список подписчиков с их данными.
+        """
+        try:
+            # Получаем объект канала
+            channel_entity = await self.client.get_entity(channel)
+            
+            # Проверяем, является ли бот администратором канала
+            try:
+                # Пытаемся получить информацию о канале как администратор
+                channel_full = await self.client(GetFullChannelRequest(channel_entity))
+                is_admin = True
+            except Exception:
+                # Если не администратор, пытаемся создать пригласительную ссылку и вступить
+                is_admin = False
+            
+            if not is_admin:
+                # Создаем одноразовую пригласительную ссылку
+                self.logger.info(f"Бот не является администратором канала {channel}. Создаем пригласительную ссылку...")
+                
+                # Пытаемся вступить в канал через публичную ссылку
+                try:
+                    await self.client.join_channel(channel_entity)
+                    self.logger.info(f"Успешно вступили в канал {channel}")
+                    
+                    # Ждем немного для синхронизации
+                    await asyncio.sleep(5)
+                    
+                except Exception as e:
+                    self.logger.error(f"Не удалось вступить в канал {channel}: {e}")
+                    raise Exception(f"Не удалось вступить в канал. Убедитесь, что бот добавлен в администраторы канала.")
+            
+            # Теперь парсим подписчиков канала (используем тот же метод, что и для участников чата)
+            # Для каналов используем iter_participants с соответствующими параметрами
+            users_obj = []
+            async for user in self.client.iter_participants(channel_entity, limit=limit):
+                if user.bot:
+                    continue
+
+                # Проверяем отмену
+                await self.check_cancelled()
+
+                # Проверяем, нужно ли собирать пользователя (активность)
+                if not self._should_collect_user(user):
+                    continue
+
+                users_obj.append(user)
+
+                # Анти-флуд задержка, каждые 3000 делаем перерыв
+                if len(users_obj) % 3000 == 0:
+                    sleep = random.uniform(17.0, 19.0)
+                    await asyncio.sleep(sleep)
+                    self.logger.info(f"Задача {self.task_id} | Сбор подписчиков {len(users_obj)} | Перерыв {sleep}с")
+            
+            await asyncio.sleep(random.uniform(17.0, 19.0))
+
+            users_data = []
+            for user_obj in users_obj:
+                # Проверяем отмену
+                await self.check_cancelled()
+
+                # Сбор bio, если нужно
+                if self.collect_bio:
+                    await asyncio.sleep(random.uniform(0.7, 0.8))
+                    # Получаем полную информацию о пользователе, чтобы достать 'о себе'
+                    full_user = await self.client(GetFullUserRequest(user_obj))
+                    user_data = await self._extract_user_data(full_user)
+
+                    if len(users_data) % 100 == 0:
+                        self.logger.info(f"Задача {self.task_id} | Сбор данных {len(users_data)}")
+                else:
+                    # Используем только базовую информацию
+                    user_data = await self._extract_user_data(user_obj)
+                users_data.append(user_data)
+                
+        except asyncio.CancelledError:
+            self.logger.info(f"Парсинг задачи {self.task_id} отменен")
+            raise
+        except FloodWaitError as e:
+            self.logger.error(f"FloodWait ошибка: {e}, {e.seconds}")
+            await self._handle_account_error(e)
+            raise
+        except Exception as e:
+            self.logger.error(f"Ошибка парсинга подписчиков канала: {e}")
+            await self._handle_account_error(e)
+            raise
+        
+        return users_data
+    
 
     def _get_last_seen(self, user_obj) -> str:
         """

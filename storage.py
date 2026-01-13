@@ -38,6 +38,7 @@ class ParsingType(PyEnum):
     CHAT_MEMBERS = 'chat_members'          # Парсинг участников чата
     CHAT_WRITERS = 'chat_writers'          # Парсинг писавших в чат
     CHANNEL_COMMENTERS = 'channel_commenters'  # Парсинг комментаторов канала
+    CHANNEL_SUBSCRIBERS = 'channel_subscribers'  # Парсинг подписчиков канала
 
 
 class SystemAccountStatus(PyEnum):

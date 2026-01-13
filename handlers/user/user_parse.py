@@ -1,5 +1,6 @@
 import re
 import logging
+import asyncio
 
 from aiogram.types import Message, CallbackQuery, LinkPreviewOptions
 from aiogram.filters import Command
@@ -59,10 +60,11 @@ async def parse_command(query: CallbackQuery, state: FSMContext):
     builder.button(text="👥 Парсинг участников чата", callback_data='parsing_type_chat_members')
     builder.button(text="✍️ Парсинг писавших в чат", callback_data='parsing_type_chat_writers')
     builder.button(text="💬 Парсинг комментаторов канала", callback_data='parsing_type_channel_commenters')
+    builder.button(text="📢 Парсинг подписчиков канала", callback_data='parsing_type_channel_subscribers')
     builder.button(text=f"Только активных: {parse_only_active_text}", callback_data='btn_only_active')
     builder.button(text=f"Сбор био: {collect_bio_text}", callback_data='btn_collect_bio')
     builder.button(text=btn_main_menu, callback_data='btn_main_menu')
-    builder.adjust(1, 1, 1, 2, 1)
+    builder.adjust(1, 1, 1, 1, 2, 1)
     
     await query.message.edit_text(
         f"<b>Выберите тип парсинга:</b>\n\n"
@@ -110,6 +112,7 @@ async def process_parsing_type_selection(query: CallbackQuery, state: FSMContext
         'parsing_type_chat_members': ParsingType.CHAT_MEMBERS,
         'parsing_type_chat_writers': ParsingType.CHAT_WRITERS,
         'parsing_type_channel_commenters': ParsingType.CHANNEL_COMMENTERS,
+        'parsing_type_channel_subscribers': ParsingType.CHANNEL_SUBSCRIBERS,
     }
     
     parsing_type = parsing_type_map.get(query.data)
@@ -120,16 +123,110 @@ async def process_parsing_type_selection(query: CallbackQuery, state: FSMContext
     # Сохраняем тип парсинга в состоянии
     await state.update_data(parsing_type=parsing_type)
     
-    # Переходим к ожиданию ссылки
-    await state.set_state(State_Parsing.waiting_for_link)
+    # Для парсинга подписчиков канала переходим в специальное состояние
+    if parsing_type == ParsingType.CHANNEL_SUBSCRIBERS:
+        await state.set_state(State_Parsing.waiting_for_channel)
+        
+        bot_info = await bot.get_me() # Получаем username бота
+        url = f"t.me/{bot_info.username}?startchannel&admin=invite_users+promote_members"
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="➕ Добавить бота в админы канала", url=url)
+        builder.button(text=btn_back, callback_data='btn_parse')
+        builder.adjust(1)
+        
+        await query.message.edit_text(
+            "📢 <b>Парсинг подписчиков канала</b>\n\n"
+            "Для парсинга подписчиков канала боту <b>нужны права на добавление участников и администраторов.</b>\n\n"
+            "1. Нажмите кнопку ниже, чтобы добавить бота в админы канала\n"
+            "2. Перешлите любой пост с канала или отправьте ссылку на канал\n"
+            "3. Начнется сбор подписчиков канала\n\n"
+            "<i>Бот автоматически создаст одноразовую пригласительную ссылку, "
+            "по которой вступит сервисный аккаунт и начнет парсинг подписчиков, после " \
+            "завершения парсинга можно всех удалить.</i>",
+            reply_markup=builder.as_markup()
+        )
+    else:
+        # Для остальных типов переходим к ожиданию ссылки
+        await state.set_state(State_Parsing.waiting_for_link)
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text=btn_back, callback_data='btn_parse')
+        
+        await query.message.edit_text(
+            "Отправьте ссылку на чат или канал в любом формате:",
+            reply_markup=builder.as_markup()
+        )
+
+
+@dp.message(State_Parsing.waiting_for_channel)
+async def process_channel_for_subscribers(message: Message, state: FSMContext):
+    """Обработка поста или ссылки на канал для парсинга подписчиков"""
+    # Получаем ссылку на канал из сообщения
+    channel_link = None
     
-    builder = InlineKeyboardBuilder()
-    builder.button(text=btn_back, callback_data='btn_parse')
+    if message.forward_from_chat:
+        # Если переслан пост с канала
+        if message.forward_from_chat.type == 'channel':
+            print(message.forward_from_chat)
+            channel_link = f"https://t.me/{message.forward_from_chat.username}" if message.forward_from_chat.username else None
+            if not channel_link:
+                channel_link = f"t.me/c/{str(message.forward_from_chat.id)[4:]}"
+    elif message.text:
+        # Если отправлена ссылка
+        channel_link = message.text.strip()
     
-    await query.message.edit_text(
-        "Отправьте ссылку на чат или канал в любом формате:",
-        reply_markup=builder.as_markup()
-    )
+    if not channel_link:
+        await message.answer(
+            "❌ Не удалось получить ссылку на канал.\n"
+            "Пожалуйста, перешлите пост с канала или отправьте ссылку на канал."
+        )
+        return
+    
+    # Валидация ссылки
+    telegram_pattern = r'^(https?://)?(t\.me/|telegram\.me/)?(@)?(\+?[a-zA-Z0-9_-]+)(/[0-9]+)?$'
+    if not re.match(telegram_pattern, channel_link):
+        await message.answer(
+            "❌ Некорректная ссылка. Используйте ссылку на Telegram канал.\n"
+            "Примеры:\n"
+            "• https://t.me/channel_name\n"
+            "• @channel_name\n"
+            "• t.me/channel_name"
+        )
+        return
+    
+    # Создаем задачу парсинга подписчиков канала
+    try:
+        task_id = 'test'
+        # task_id = await db_manage.create_parsing_task(
+        #     creator_id=message.from_user.id,
+        #     target_url=channel_link,
+        #     parsing_type=ParsingType.CHANNEL_SUBSCRIBERS
+        # )
+        
+        # Очищаем состояние
+        await state.clear()
+        
+        await message.answer(
+            f"✅ <b>Задача парсинга подписчиков канала создана!</b>\n\n"
+            f"<b>ID задачи:</b> {task_id}\n"
+            f"<b>Канал:</b> {channel_link}\n\n"
+            f"Бот автоматически создаст одноразовую пригласительную ссылку, "
+            f"сервисный аккаунт вступит в канал и начнет парсинг подписчиков.\n\n"
+            f"Статус можно проверить кнопкой <b>\"Статус задач\"</b> или командой /status\n"
+            f"Ожидайте уведомления о завершения.",
+            reply_markup=user_parsing_started(),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        
+    except Exception as e:
+        user = await db_manage.get_user_by_id(message.from_user.id)
+        await message.answer(
+            f"❌ Ошибка при создании задачи:\n"
+            f"Попробуйте позже или обратитесь в поддержку.",
+            reply_markup=user_main_menu(user)
+        )
+        logger.error(f"Ошибка при создании задачи парсинга подписчиков канала: {str(e)}")
 
 
 @dp.message(State_Parsing.waiting_for_link)
@@ -176,7 +273,8 @@ async def process_parsing_link(message: Message, state: FSMContext):
         type_description = {
             ParsingType.CHAT_MEMBERS: "участников чата",
             ParsingType.CHAT_WRITERS: "писавших в чат",
-            ParsingType.CHANNEL_COMMENTERS: "комментаторов канала"
+            ParsingType.CHANNEL_COMMENTERS: "комментаторов канала",
+            ParsingType.CHANNEL_SUBSCRIBERS: "подписчиков канала"
         }.get(parsing_type, "участников")
         
         await message.answer(

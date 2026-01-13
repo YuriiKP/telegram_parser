@@ -60,6 +60,8 @@ async def process_task(task: ParsingTask):
                     users_data = await parser.parse_users_from_history(task.target_url)
                 elif task.parsing_type == ParsingType.CHANNEL_COMMENTERS:
                     users_data = await parser.parse_channel_commenters(task.target_url)
+                elif task.parsing_type == ParsingType.CHANNEL_SUBSCRIBERS:
+                    users_data = await parser.parse_channel_subscribers(task.target_url)
                 else:
                     # fallback на парсинг участников чата
                     users_data = await parser.parse_users_chat(task.target_url)
@@ -76,7 +78,8 @@ async def process_task(task: ParsingTask):
                         type_description = {
                             ParsingType.CHAT_MEMBERS: "участников чата",
                             ParsingType.CHAT_WRITERS: "писавших в чат",
-                            ParsingType.CHANNEL_COMMENTERS: "комментаторов канала"
+                            ParsingType.CHANNEL_COMMENTERS: "комментаторов канала",
+                            ParsingType.CHANNEL_SUBSCRIBERS: "подписчиков канала"
                         }.get(task.parsing_type, "участников")
                         
                         # Отправляем сообщение пользователю

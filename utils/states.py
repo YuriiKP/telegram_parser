@@ -15,3 +15,4 @@ class State_Parsing(StatesGroup):
     """Состояние для процесса парсинга"""
     waiting_for_parsing_type = State()  # выбор типа парсинга
     waiting_for_link = State()          # ожидание ссылки
+    waiting_for_channel = State()       # ожидание поста/ссылки на канал для парсинга подписчиков
