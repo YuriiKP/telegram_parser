@@ -2,11 +2,11 @@ import re
 import logging
 import asyncio
 
-from aiogram.types import Message, CallbackQuery, LinkPreviewOptions
+from aiogram.types import Message, CallbackQuery, LinkPreviewOptions, ChatMemberAdministrator, ChatMemberOwner
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram import F
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from loader import dp, bot, db_manage
@@ -164,17 +164,19 @@ async def process_channel_for_subscribers(message: Message, state: FSMContext):
     """Обработка поста или ссылки на канал для парсинга подписчиков"""
     # Получаем ссылку на канал из сообщения
     channel_link = None
+    chat_id = None
     
     if message.forward_from_chat:
         # Если переслан пост с канала
         if message.forward_from_chat.type == 'channel':
-            print(message.forward_from_chat)
             channel_link = f"https://t.me/{message.forward_from_chat.username}" if message.forward_from_chat.username else None
             if not channel_link:
                 channel_link = f"t.me/c/{str(message.forward_from_chat.id)[4:]}"
+            chat_id = message.forward_from_chat.id
     elif message.text:
         # Если отправлена ссылка
         channel_link = message.text.strip()
+        # Пытаемся извлечь chat_id из ссылки (позже, при проверке прав)
     
     if not channel_link:
         await message.answer(
@@ -195,14 +197,62 @@ async def process_channel_for_subscribers(message: Message, state: FSMContext):
         )
         return
     
-    # Создаем задачу парсинга подписчиков канала
+    # Проверяем права бота в канале
     try:
-        task_id = 'test'
-        # task_id = await db_manage.create_parsing_task(
-        #     creator_id=message.from_user.id,
-        #     target_url=channel_link,
-        #     parsing_type=ParsingType.CHANNEL_SUBSCRIBERS
-        # )
+        # Получаем информацию о боте
+        bot_info = await bot.get_me()
+        
+        # Если chat_id не получен из пересланного сообщения, пытаемся получить его из ссылки
+        if not chat_id:
+            # Пытаемся получить chat_id через получение информации о чате
+            try:
+                chat = await bot.get_chat(channel_link)
+                chat_id = chat.id
+            except Exception as e:
+                logger.error(f"Не удалось получить chat_id для {channel_link}: {e}")
+                await message.answer(
+                    "❌ Не удалось получить информацию о канале.\n"
+                    f"Убедитесь, что бот @{bot_info.username} имеет доступ к каналу и является администратором."
+                )
+                return
+        
+        # Получаем информацию о боте в конкретном чате
+        bot_member = await bot.get_chat_member(chat_id=chat_id, user_id=bot_info.id)
+        
+        # Проверяем, является ли бот администратором или владельцем
+        is_admin = isinstance(bot_member, ChatMemberAdministrator)
+        can_promote_members = False
+        can_invite_users = False
+        
+        if isinstance(bot_member, ChatMemberAdministrator):
+            can_promote_members = bot_member.can_promote_members
+            can_invite_users = bot_member.can_invite_users
+
+        if not is_admin:
+            raise TelegramForbiddenError
+        
+        if not can_promote_members or not can_invite_users:
+            await message.answer(
+                "❌ <b>У бота недостаточно прав в канале!</b>\n\n"
+                f"Текущие права бота:\n"
+                f"• Добавление администраторов: {'✅' if can_promote_members else '❌'}\n"
+                f"• Приглашение пользователей: {'✅' if can_invite_users else '❌'}\n\n"
+                "Для парсинга подписчиков канала боту нужны оба этих права.\n"
+                "Пожалуйста, обновите права бота в настройках канала и попробуйте снова.",
+                reply_markup=InlineKeyboardBuilder()
+                    .button(
+                        text="➕ Обновить права бота",
+                        url=f"t.me/{bot_info.username}?startchannel&admin=invite_users+promote_members")
+                    .as_markup()
+            )
+            return
+        
+        # Все проверки пройдены, создаем задачу парсинга
+        task_id = await db_manage.create_parsing_task(
+            creator_id=message.from_user.id,
+            target_url=chat_id,
+            parsing_type=ParsingType.CHANNEL_SUBSCRIBERS
+        )
         
         # Очищаем состояние
         await state.clear()
@@ -219,14 +269,31 @@ async def process_channel_for_subscribers(message: Message, state: FSMContext):
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         
+    except TelegramForbiddenError:
+        await message.answer(
+            "❌ <b>Бот не является администратором канала!</b>\n\n"
+            "Пожалуйста, добавьте бота в администраторы канала с правами:\n"
+            "• Добавление администраторов (promote members)\n"
+            "• Приглашение пользователей (invite users)\n\n"
+            "После добавления попробуйте снова отправить пост или ссылку на канал.",
+            reply_markup=InlineKeyboardBuilder()
+                .button(
+                    text="➕ Добавить бота в админы канала",
+                    url=f"t.me/{bot_info.username}?startchannel&admin=invite_users+promote_members")
+                .as_markup()
+        )
+    
     except Exception as e:
+        # Очищаем состояние
+        await state.clear()
+
+        logger.error(f"Ошибка при проверке прав бота или создании задачи: {str(e)}")
         user = await db_manage.get_user_by_id(message.from_user.id)
         await message.answer(
             f"❌ Ошибка при создании задачи:\n"
-            f"Попробуйте позже или обратитесь в поддержку.",
+            f"Попробуйте позже или обратитесь в поддержку.\n\n",
             reply_markup=user_main_menu(user)
         )
-        logger.error(f"Ошибка при создании задачи парсинга подписчиков канала: {str(e)}")
 
 
 @dp.message(State_Parsing.waiting_for_link)

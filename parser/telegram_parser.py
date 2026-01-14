@@ -16,8 +16,11 @@ from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
 
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
 from errors import JoinRequestSentError
 from storage import SystemAccountStatus, ParsingTaskStatus, DB_M
+from loader import bot
 
 
 
@@ -85,8 +88,8 @@ class TelegramParser:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 
-                api_id = config.get('app_id')
-                api_hash = config.get('app_hash')
+                api_id = config.get('app_id') or config.get('api_id')
+                api_hash = config.get('app_hash') or config.get('api_hash')
                 device_model = config.get('device_model', None) or config.get('device', None)
                 system_version = config.get('system_version', None) or config.get('sdk', None)
                 lang_code = config.get('lang_code', None)
@@ -440,102 +443,100 @@ class TelegramParser:
         return await self.parse_users_from_history(chat, limit)
     
     
-    async def parse_channel_subscribers(self, channel: str, limit: int = 10000) -> List[Dict]:
+    async def parse_channel_subscribers(self, chat_id: str, limit: int = 10000) -> List[Dict]:
         """
         Парсинг подписчиков канала.
         
         Args:
-            channel (str): ссылка на канал.
+            chat_id (str): ID канала или username.
             limit (int): Максимальное количество подписчиков для парсинга.
         
         Returns:
             List[Dict]: Список подписчиков с их данными.
-        """
-        try:
-            # Получаем объект канала
-            channel_entity = await self.client.get_entity(channel)
-            
-            # Проверяем, является ли бот администратором канала
-            try:
-                # Пытаемся получить информацию о канале как администратор
-                channel_full = await self.client(GetFullChannelRequest(channel_entity))
-                is_admin = True
-            except Exception:
-                # Если не администратор, пытаемся создать пригласительную ссылку и вступить
-                is_admin = False
-            
-            if not is_admin:
-                # Создаем одноразовую пригласительную ссылку
-                self.logger.info(f"Бот не является администратором канала {channel}. Создаем пригласительную ссылку...")
-                
-                # Пытаемся вступить в канал через публичную ссылку
-                try:
-                    await self.client.join_channel(channel_entity)
-                    self.logger.info(f"Успешно вступили в канал {channel}")
-                    
-                    # Ждем немного для синхронизации
-                    await asyncio.sleep(5)
-                    
-                except Exception as e:
-                    self.logger.error(f"Не удалось вступить в канал {channel}: {e}")
-                    raise Exception(f"Не удалось вступить в канал. Убедитесь, что бот добавлен в администраторы канала.")
-            
-            # Теперь парсим подписчиков канала (используем тот же метод, что и для участников чата)
-            # Для каналов используем iter_participants с соответствующими параметрами
-            users_obj = []
-            async for user in self.client.iter_participants(channel_entity, limit=limit):
-                if user.bot:
-                    continue
-
-                # Проверяем отмену
-                await self.check_cancelled()
-
-                # Проверяем, нужно ли собирать пользователя (активность)
-                if not self._should_collect_user(user):
-                    continue
-
-                users_obj.append(user)
-
-                # Анти-флуд задержка, каждые 3000 делаем перерыв
-                if len(users_obj) % 3000 == 0:
-                    sleep = random.uniform(17.0, 19.0)
-                    await asyncio.sleep(sleep)
-                    self.logger.info(f"Задача {self.task_id} | Сбор подписчиков {len(users_obj)} | Перерыв {sleep}с")
-            
-            await asyncio.sleep(random.uniform(17.0, 19.0))
-
-            users_data = []
-            for user_obj in users_obj:
-                # Проверяем отмену
-                await self.check_cancelled()
-
-                # Сбор bio, если нужно
-                if self.collect_bio:
-                    await asyncio.sleep(random.uniform(0.7, 0.8))
-                    # Получаем полную информацию о пользователе, чтобы достать 'о себе'
-                    full_user = await self.client(GetFullUserRequest(user_obj))
-                    user_data = await self._extract_user_data(full_user)
-
-                    if len(users_data) % 100 == 0:
-                        self.logger.info(f"Задача {self.task_id} | Сбор данных {len(users_data)}")
-                else:
-                    # Используем только базовую информацию
-                    user_data = await self._extract_user_data(user_obj)
-                users_data.append(user_data)
-                
-        except asyncio.CancelledError:
-            self.logger.info(f"Парсинг задачи {self.task_id} отменен")
-            raise
-        except FloodWaitError as e:
-            self.logger.error(f"FloodWait ошибка: {e}, {e.seconds}")
-            await self._handle_account_error(e)
-            raise
-        except Exception as e:
-            self.logger.error(f"Ошибка парсинга подписчиков канала: {e}")
-            await self._handle_account_error(e)
-            raise
+        """        
+        # 1. Создаем пригласительную ссылку без ограничения по количеству участников
+        self.logger.info(f"Начинаем парсинг подписчиков канала, создаем пригласительную ссылку для канала {chat_id}")
+        invite_link = await bot.create_chat_invite_link(
+            chat_id=chat_id,
+            name=f"Парсинг {self.task_id}",
+            member_limit=None  # Без ограничения по количеству участников
+        )
         
-        return users_data
+        # 2. Вступаем в канал по пригласительной ссылке
+        self.logger.info("Вступаем в канал по пригласительной ссылке")
+        try:
+            await self._join_chat(invite_link.invite_link)
+            self.logger.info("Успешно вступили в канал")
+        except Exception as e:
+            # Если ссылка истекла, пробуем создать новую
+            if "expired" in str(e).lower() or "not valid" in str(e).lower():
+                self.logger.warning("Пригласительная ссылка истекла, создаем новую")
+                invite_link = await bot.create_chat_invite_link(
+                    chat_id=chat_id,
+                    name=f"Парсинг {self.task_id} повторно",
+                    member_limit=None
+                )
+                await self._join_chat(invite_link.invite_link)
+                self.logger.info("Успешно вступили в канал по новой ссылке")
+            else:
+                self.logger.error(f"Ошибка вступления в канал: {e}")
+                raise Exception(f"Не удалось вступить в канал по пригласительной ссылке: {e}")
+        
+        # 3. Добавляем аккаунт в админы канала
+        self.logger.info("Добавляем аккаунт в администраторы канала")
+        try:
+            me = await self.client.get_me()
+            self.logger.info(f"ID аккаунта для назначения админом: {me.id}")
+            
+            # Назначаем аккаунт администратором с минимальными правами
+            # Для парсинга достаточно прав на просмотр участников
+            success = await bot.promote_chat_member(
+                chat_id=chat_id,
+                user_id=int(me.id),
+                can_change_info=False,
+                can_invite_users=True,
+                can_promote_members=False,
+                can_manage_chat=False,
+                can_delete_messages=False,
+                can_manage_video_chats=False,
+                can_restrict_members=False,
+                can_pin_messages=False,
+                can_manage_topics=False,
+                can_post_messages=False,
+                can_edit_messages=False,
+                can_manage_direct_messages=False,
+                is_anonymous=False
+            )
+            
+            if success:
+                self.logger.info(f"Аккаунт {me.id} успешно назначен администратором канала")
+            else:
+                self.logger.warning(f"Не удалось назначить аккаунт администратором, но продолжаем парсинг")
+                
+        except Exception as e:
+            self.logger.warning(f"Ошибка при назначении админа: {e}. Продолжаем парсинг без прав администратора.")
+            # Не прерываем выполнение, возможно парсинг все равно будет работать
+        
+        # 4. Ждем немного для синхронизации
+        await asyncio.sleep(3)
+        
+        # 5. Получаем entity канала для парсинга
+        try:
+            # Пробуем получить entity канала
+            if chat_id.startswith('-100') and chat_id[1:].isdigit():
+                # Это числовой ID канала в строковом формате
+                channel_entity = await self.client.get_entity(int(chat_id))
+            else:
+                # Это username или другой формат
+                channel_entity = await self.client.get_entity(chat_id)
+        except Exception as e:
+            self.logger.error(f"Ошибка получения entity канала {chat_id}: {e}")
+            raise Exception(f"Не удалось получить информацию о канале: {e}")
+        
+        # 6. Выполняем парсинг участников канала
+        self.logger.info(f"Начинаем парсинг участников канала {chat_id}")
+        
+        return await self.parse_users_chat(channel_entity, limit)
     
 
     def _get_last_seen(self, user_obj) -> str:
@@ -649,10 +650,6 @@ class TelegramParser:
         
         except UserAlreadyParticipantError:
             print("Вы уже состоите в этом чате.")
-        except FloodWaitError as e:
-            print(f"Слишком много попыток! Нужно подождать {e.seconds} секунд.")
-            await self._handle_account_error(e)
-            raise
         except Exception as e:
             # Если нужно ждать одобрения
             if "successfully requested to join" in str(e):
