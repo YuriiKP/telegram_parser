@@ -19,6 +19,45 @@ from utils.states import State_Parsing
 logger = logging.getLogger(__name__)
 
 
+def normalize_telegram_link(link: str) -> str:
+    """
+    Нормализует ссылку на Telegram чат/канал в формат @username.
+    
+    Примеры:
+    - https://t.me/channel_name -> @channel_name
+    - t.me/channel_name -> @channel_name
+    - @channel_name -> @channel_name
+    - telegram.me/channel_name -> @channel_name
+    - +123456789 -> +123456789 (номер телефона не изменяется)
+    
+    Args:
+        link (str): Ссылка в любом формате
+        
+    Returns:
+        str: Нормализованная ссылка в формате @username или исходная строка
+    """
+    # Паттерн для валидации Telegram ссылок
+    telegram_pattern = r'^(https?://)?(t\.me/|telegram\.me/)?(@)?(\+?[a-zA-Z0-9_-]+)(/[0-9]+)?$'
+    
+    match = re.match(telegram_pattern, link)
+    if not match:
+        # Если ссылка не соответствует паттерну, возвращаем исходную
+        return link
+    
+    # Извлекаем username (группа 4)
+    username = match.group(4)
+    
+    # Если username начинается с + (номер телефона), оставляем как есть
+    if username.startswith('+'):
+        return username
+    
+    # Добавляем @ в начало, если его нет
+    if not username.startswith('@'):
+        username = f'@{username}'
+    
+    return username
+
+
 # Обработчики инлайн кнопок
 @dp.callback_query(F.data == 'btn_parse')
 async def parse_command(query: CallbackQuery, state: FSMContext):
@@ -37,15 +76,30 @@ async def parse_command(query: CallbackQuery, state: FSMContext):
         if len(active_tasks) > 3:
             task_info += f"\n• ... и ещё {len(active_tasks) - 3} задач"
         
-        await query.message.edit_text(
-            f"⏳ <b>У вас уже есть активная задача парсинга!</b>\n\n"
-            f"Вы можете запустить только одну задачу одновременно.\n\n"
-            f"<b>Активные задачи:</b>\n{task_info}\n\n"
-            f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
-            reply_markup=user_main_menu(user),
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
-        )
-        return
+        try:
+            await query.message.edit_text(
+                f"⏳ <b>У вас уже есть активная задача парсинга!</b>\n\n"
+                f"Вы можете запустить только одну задачу одновременно.\n\n"
+                f"<b>Активные задачи:</b>\n{task_info}\n\n"
+                f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
+                reply_markup=user_main_menu(user),
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+            return
+        except TelegramBadRequest:
+            await query.message.answer(
+                f"⏳ <b>У вас уже есть активная задача парсинга!</b>\n\n"
+                f"Вы можете запустить только одну задачу одновременно.\n\n"
+                f"<b>Активные задачи:</b>\n{task_info}\n\n"
+                f"Статус задач можно проверить кнопкой <b>\"Статус задач\"</b>.",
+                reply_markup=user_main_menu(user),
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+            try: 
+                await query.message.delete()
+            except Exception:
+                pass
+            return
     
     
     # Устанавливаем состояние ожидания типа парсинга
@@ -197,6 +251,9 @@ async def process_channel_for_subscribers(message: Message, state: FSMContext):
         )
         return
     
+    # Нормализуем ссылку
+    normalized_link = normalize_telegram_link(channel_link)
+    
     # Проверяем права бота в канале
     try:
         # Получаем информацию о боте
@@ -206,13 +263,14 @@ async def process_channel_for_subscribers(message: Message, state: FSMContext):
         if not chat_id:
             # Пытаемся получить chat_id через получение информации о чате
             try:
-                chat = await bot.get_chat(channel_link)
+                chat = await bot.get_chat(normalized_link)
                 chat_id = chat.id
             except Exception as e:
-                logger.error(f"Не удалось получить chat_id для {channel_link}: {e}")
+                logger.error(f"Не удалось получить chat_id для {normalized_link}: {e}")
                 await message.answer(
                     "❌ Не удалось получить информацию о канале.\n"
-                    f"Убедитесь, что бот @{bot_info.username} имеет доступ к каналу и является администратором."
+                    f"Убедитесь, что бот @{bot_info.username} имеет доступ к каналу и является администратором.\n"
+                    "Если вы отправляли ссылку на канал, тогда вместо этого попробуйте переслать пост с канала"
                 )
                 return
         
@@ -260,7 +318,7 @@ async def process_channel_for_subscribers(message: Message, state: FSMContext):
         await message.answer(
             f"✅ <b>Задача парсинга подписчиков канала создана!</b>\n\n"
             f"<b>ID задачи:</b> {task_id}\n"
-            f"<b>Канал:</b> {channel_link}\n\n"
+            f"<b>Канал:</b> {normalized_link}\n\n"
             f"Бот автоматически создаст одноразовую пригласительную ссылку, "
             f"сервисный аккаунт вступит в канал и начнет парсинг подписчиков.\n\n"
             f"Статус можно проверить кнопкой <b>\"Статус задач\"</b> или командой /status\n"
@@ -439,6 +497,14 @@ async def process_show_status(message: Message):
         ParsingTaskStatus.ERROR: "❌",
         ParsingTaskStatus.CANCELLED: "🚫"
     }
+
+    status_text_map = {
+        ParsingTaskStatus.NEW: "В очереди",
+        ParsingTaskStatus.PROCESSING: "Выполняется",
+        ParsingTaskStatus.COMPLETED: "Выполнена",
+        ParsingTaskStatus.ERROR: "Ошибка",
+        ParsingTaskStatus.CANCELLED: "Отменена"
+    }
     
     # Проверяем наличие активных задач
     has_active_tasks = False
@@ -453,13 +519,14 @@ async def process_show_status(message: Message):
         
     for task in tasks[:5]:  # Показываем последние 5 задач
         status_emoji = status_emoji_map.get(task.status, "❓")
+        status_text = status_text_map.get(task.status, "❓")
         
         created_time = task.created_at.strftime("%d.%m.%Y %H:%M") if task.created_at else "N/A"
         
         text += (
             f"{status_emoji} <b>Задача #{task.id}</b>\n"
             f"Ссылка: {task.target_url}\n"
-            f"Статус: {task.status.value}\n"
+            f"Статус: {status_text}\n"
             f"Создана: {created_time}\n"
             f"{'-' * 30}\n"
         )
