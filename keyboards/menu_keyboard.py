@@ -6,11 +6,12 @@ from keyboards.text import *
 from storage import User
 
 
-# Админ клавиатуры 
+# Админ клавиатуры
 admin_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=btn_admins), KeyboardButton(text=btn_about_users_bot)],
-        [KeyboardButton(text=btn_sync_accounts)]
+        [KeyboardButton(text=btn_sync_accounts)],
+        [KeyboardButton(text=btn_accounts_info)]
     ],
     resize_keyboard=True
 )
@@ -18,7 +19,8 @@ admin_menu = ReplyKeyboardMarkup(
 main_admin_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=btn_admins), KeyboardButton(text=btn_about_users_bot)],
-        [KeyboardButton(text=btn_sync_accounts)]
+        [KeyboardButton(text=btn_sync_accounts)],
+        [KeyboardButton(text=btn_accounts_info)]
     ],
     resize_keyboard=True
 )

@@ -6,6 +6,7 @@ from datetime import datetime
 btn_admins = '🔑 Админы'
 btn_about_users_bot = '👥 Пользователи'
 btn_sync_accounts = '🔄 Синхронизировать аккаунты'
+btn_accounts_info = '📊 Аккаунты'
 
 # Текст админов
 admin_main_menu_text = 'Админ меню'

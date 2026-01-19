@@ -3,3 +3,4 @@ from .def_file_id import dp, bot
 from .notice import dp, bot
 from .pre_checkout import dp
 from .sync_accounts import dp
+from .accounts_info import dp
