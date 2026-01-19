@@ -7,7 +7,7 @@ from datetime import datetime
 from aiogram.types import BufferedInputFile, LinkPreviewOptions
 from telethon.errors import FloodWaitError
 
-from loader import db_manage, bot
+from loader import db_manage, bot, TG_ADMIN
 from parser.telegram_parser import TelegramParser
 from storage import ParsingTask, ParsingTaskStatus, SystemAccountStatus, ParsingType
 

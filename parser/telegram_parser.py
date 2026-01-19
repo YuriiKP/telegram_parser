@@ -344,8 +344,9 @@ class TelegramParser:
                     seen_users.add(comment.from_id.user_id)
                     users_obj.append(comment.from_id) # Здесь добавляю объекты в список, чтобы можно было дальше получить информацию, просто по id это не получится
 
-                # Анти-флуд задержка, каждые 2000 делаем перерыв
-                if len(users_obj) % 2000 == 0:
+                await asyncio.sleep(0.05)
+                # Анти-флуд задержка, каждые 3000 делаем перерыв
+                if len(users_obj) % 3000 == 0:
                     sleep = random.uniform(18.0, 21.0)
                     await asyncio.sleep(sleep)
                     self.logger.info(f"Задача {self.task_id} | Сбор участников {len(users_obj)} | Перерыв {sleep}с")
@@ -356,7 +357,9 @@ class TelegramParser:
                 #     break
 ################################################################################ 
             
-            await asyncio.sleep(random.uniform(12.0, 16.0))
+            sleep = random.uniform(12.0, 16.0)
+            await asyncio.sleep(sleep)
+            self.logger.info(f"Задача {self.task_id} | Собрано {len(users_obj)} | Перерыв перед сбором информации {sleep}с")
 
             users_data = []
             for peer_user in users_obj:
