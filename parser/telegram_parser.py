@@ -344,9 +344,9 @@ class TelegramParser:
                     seen_users.add(comment.from_id.user_id)
                     users_obj.append(comment.from_id) # Здесь добавляю объекты в список, чтобы можно было дальше получить информацию, просто по id это не получится
 
-                # Анти-флуд задержка, каждые 3000 делаем перерыв
-                if len(users_obj) % 3000 == 0:
-                    sleep = random.uniform(17.0, 19.0)
+                # Анти-флуд задержка, каждые 2000 делаем перерыв
+                if len(users_obj) % 2000 == 0:
+                    sleep = random.uniform(18.0, 21.0)
                     await asyncio.sleep(sleep)
                     self.logger.info(f"Задача {self.task_id} | Сбор участников {len(users_obj)} | Перерыв {sleep}с")
 
@@ -371,7 +371,7 @@ class TelegramParser:
                     user = full_user.users[0]
                     full_info = full_user.full_user
                 else:
-                    await asyncio.sleep(random.uniform(0.1, 0.2))
+                    await asyncio.sleep(random.uniform(0.2, 0.4))
                     # Получаем только базовую информацию
                     user = await self.client.get_entity(peer_user)
                     full_info = None
