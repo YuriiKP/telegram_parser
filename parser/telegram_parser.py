@@ -10,7 +10,7 @@ import openpyxl
 from openpyxl.styles import Font
 
 from telethon import TelegramClient
-from telethon.tl.types import Chat, User, Message, UserFull, PeerUser, UserStatusOnline, UserStatusOffline, UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth, UserStatusEmpty
+from telethon.tl.types import Chat, User, Message, UserFull, PeerUser, PeerChannel, UserStatusOnline, UserStatusOffline, UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth, UserStatusEmpty
 from telethon.errors import FloodWaitError, UserAlreadyParticipantError
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
@@ -337,9 +337,15 @@ class TelegramParser:
             # c = 0
 ################################################################################
             async for comment in self.client.iter_messages(entity=chat, limit=limit):
+                print(comment.from_id)
                 # Проверяем отмену каждые 10 сообщений
                 await self.check_cancelled()
-      
+
+                # Проверяем, если пользователь сунул на парсинг писавших в чат канал, вместо чата
+                if isinstance(comment.peer_id, PeerChannel):
+                    self.logger.error(f"Задача {self.task_id} | ошибка при выборе типа задачи, собрать историю канала")
+                    raise Exception("Ошибка при выборе типа задачи, собрать историю канала")
+
                 if isinstance(comment.from_id, PeerUser) and comment.from_id.user_id not in seen_users:
                     seen_users.add(comment.from_id.user_id)
                     users_obj.append(comment.from_id) # Здесь добавляю объекты в список, чтобы можно было дальше получить информацию, просто по id это не получится

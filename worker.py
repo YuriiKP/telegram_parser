@@ -122,7 +122,8 @@ async def process_task(task: ParsingTask):
                     await bot.send_message(
                         chat_id=task.creator_id,
                         text=f"⚠️ Задача #{task.id} завершена, но данные не найдены.\n"
-                             f"Ссылка: {task.target_url}"
+                             f"Ссылка: {task.target_url}",
+                        link_preview_options=LinkPreviewOptions(is_disabled=True)
                     )
 
                 # Обновляем статус задачи как completed
@@ -201,10 +202,10 @@ async def worker():
             if tasks:
                 logger.info(f"Найдено {len(tasks)} новых задач")
                 # Обрабатываем каждую задачу последовательно
-                for task in tasks:
-                    await process_task(task)
-                # tasks_coroutines = [process_task(task) for task in tasks]
-                # await asyncio.gather(*tasks_coroutines)
+                # for task in tasks:
+                    # await process_task(task)
+                tasks_coroutines = [process_task(task) for task in tasks]
+                await asyncio.gather(*tasks_coroutines)
             else:
                 logger.debug("Новых задач нет")
 
