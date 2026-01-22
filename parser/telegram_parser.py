@@ -345,9 +345,6 @@ class TelegramParser:
             entity = await self.client.get_entity(chat)
             # Если это канал (broadcast=True), а не супергруппа (megagroup=True)
             if getattr(entity, 'broadcast', False):
-                print('\n\n')
-                print(entity)
-                print('\n\n')
                 self.logger.error(f"Задача {self.task_id} | Ошибка: передан канал вместо чата.")
                 raise Exception("Нельзя собрать 'писавших' участников из канала, используйте супергруппу.")
 
