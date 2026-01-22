@@ -10,7 +10,11 @@ import openpyxl
 from openpyxl.styles import Font
 
 from telethon import TelegramClient
-from telethon.tl.types import Chat, User, Message, UserFull, PeerUser, PeerChannel, UserStatusOnline, UserStatusOffline, UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth, UserStatusEmpty
+from telethon.tl.types import (
+    Chat, User, Channel, Message, UserFull, PeerUser, PeerChannel, 
+    UserStatusOnline, UserStatusOffline, UserStatusRecently, UserStatusLastWeek, 
+    UserStatusLastMonth, UserStatusEmpty
+)
 from telethon.errors import FloodWaitError, UserAlreadyParticipantError
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
@@ -336,15 +340,20 @@ class TelegramParser:
 ################################################################################
             # c = 0
 ################################################################################
-            async for comment in self.client.iter_messages(entity=chat, limit=limit):
-                print(comment.from_id)
+
+            # Проверяем, если пользователь сунул на парсинг писавших в чат канал, вместо чата
+            entity = await self.client.get_entity(chat)
+            # Если это канал (broadcast=True), а не супергруппа (megagroup=True)
+            if getattr(entity, 'broadcast', False):
+                print('\n\n')
+                print(entity)
+                print('\n\n')
+                self.logger.error(f"Задача {self.task_id} | Ошибка: передан канал вместо чата.")
+                raise Exception("Нельзя собрать 'писавших' участников из канала, используйте супергруппу.")
+
+            async for comment in self.client.iter_messages(entity=entity, limit=limit):
                 # Проверяем отмену каждые 10 сообщений
                 await self.check_cancelled()
-
-                # Проверяем, если пользователь сунул на парсинг писавших в чат канал, вместо чата
-                if isinstance(comment.peer_id, PeerChannel):
-                    self.logger.error(f"Задача {self.task_id} | ошибка при выборе типа задачи, собрать историю канала")
-                    raise Exception("Ошибка при выборе типа задачи, собрать историю канала")
 
                 if isinstance(comment.from_id, PeerUser) and comment.from_id.user_id not in seen_users:
                     seen_users.add(comment.from_id.user_id)
