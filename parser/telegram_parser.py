@@ -4,14 +4,22 @@ import json
 import logging
 import os
 import random
+from shutil import ExecError
 from typing import Dict, List, Optional, Union
 from venv import logger
 
 import openpyxl
 from openpyxl.styles import Font
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, UserAlreadyParticipantError
-from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.errors import (
+    ChannelsTooMuchError,
+    FloodWaitError,
+    InviteHashExpiredError,
+    InviteHashInvalidError,
+    UserAlreadyParticipantError,
+    UsernameNotOccupiedError,
+)
+from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import (
@@ -352,9 +360,7 @@ class TelegramParser:
 
         return users_data
 
-    async def parse_users_from_history(
-        self, chat: str, limit: int = 20000
-    ) -> List[Dict]:
+    async def parse_users_from_history(self, chat: str, limit: int = 50) -> List[Dict]:
         """
         Парсинг участников из истории сообщений чата.
 
@@ -366,6 +372,7 @@ class TelegramParser:
             List[Dict]: Список участников с их данными.
         """
 
+        users_data = []
         try:
             # Проверяем, если пользователь сунул на парсинг писавших в чат канал, вместо чата
             entity = await self.client.get_entity(chat)
@@ -422,23 +429,26 @@ class TelegramParser:
                 f"Задача {self.task_id} | Приступаем к сбору информации о пользователях"
             )
 
-            users_data = []
             for peer_user in users_obj:
                 # Проверяем отмену
                 await self.check_cancelled()
 
                 # Сбор bio, если нужно
-                if self.collect_bio:
-                    await asyncio.sleep(random.uniform(0.7, 0.8))
-                    # Получаем полную информацию о пользователе
-                    full_user = await self.client(GetFullUserRequest(peer_user))
-                    user = full_user.users[0]
-                    full_info = full_user.full_user
-                else:
-                    await asyncio.sleep(random.uniform(0.2, 0.4))
-                    # Получаем только базовую информацию
-                    user = await self.client.get_entity(peer_user)
-                    full_info = None
+                try:
+                    if self.collect_bio:
+                        await asyncio.sleep(random.uniform(0.7, 0.8))
+                        # Получаем полную информацию о пользователе
+                        full_user = await self.client(GetFullUserRequest(peer_user))
+                        user = full_user.users[0]
+                        full_info = full_user.full_user
+                    else:
+                        await asyncio.sleep(random.uniform(0.2, 0.4))
+                        # Получаем только базовую информацию
+                        user = await self.client.get_entity(peer_user)
+                        full_info = None
+                except ValueError:
+                    # Пользователь недоступен (удалён / деактивирован) — пропускаем
+                    continue
 
                 if user.bot:
                     continue
@@ -459,13 +469,26 @@ class TelegramParser:
             self.logger.info(f"Парсинг задачи {self.task_id} отменен")
             raise
         except ValueError as e:
-            # Вступаем в чат, немного ждем и парсим
-            self.logger.error(
-                f"ValueError ошибка, пробую вступить в чат и повторить попытку: {e}"
-            )
-            await self._join_chat(chat)
-            await asyncio.sleep(10)
-            return await self.parse_users_from_history(chat)
+            error_str = str(e)
+            if (
+                "PeerUser" in error_str
+                or "No user has" in error_str
+                or "Could not find the input entity" in error_str
+            ):
+                # Это ошибка поиска пользователя — пользователь удалён или недоступен
+                self.logger.warning(
+                    f"Задача {self.task_id} | Некоторые пользователи недоступны, "
+                    f"продолжаем с собранными: {e}"
+                )
+                return users_data
+            else:
+                # Чат не найден — пробуем вступить
+                self.logger.error(
+                    f"Задача {self.task_id} | Чат не найден, пробую вступить: {e}"
+                )
+                await self._join_chat(chat)
+                await asyncio.sleep(10)
+                return await self.parse_users_from_history(chat)
         except FloodWaitError as e:
             self.logger.error(f"FloodWait ошибка: {e}, {e.seconds}")
             await self._handle_account_error(e)
@@ -722,15 +745,46 @@ class TelegramParser:
             link str: Пригласительная ссылка
 
         """
-        # Извлекаем хэш из ссылки
-        invite_hash = link.split("/")[-1].replace("+", "")
 
         try:
-            await self.client(ImportChatInviteRequest(invite_hash))
-            print(f"Успешно вступили в чат по ссылке: {link}")
+            # Пробуем как invite-ссылку
+            if "+" in link or "joinchat" in link:
+                # Извлекаем хеш
+                if "/+" in link:
+                    invite_hash = link.split("/+")[1]
+                elif "/joinchat/" in link:
+                    invite_hash = link.split("/joinchat/")[1]
+                else:
+                    invite_hash = link
+
+                await self.client(ImportChatInviteRequest(invite_hash))
+                self.logger.info(f"Вступили в чат @{link}!")
+            else:
+                raise Exception(f"Не удалось распознать ссылку: {link}")
+            #     # Пробуем как username
+            #     if link.startswith("@"):
+            #         link = link[1:]
+            #     elif "t.me/" in link:
+            #         link = link.split("t.me/")[1]
+
+            #     entity = await self.client.get_entity(link)
+            #     await self.client(JoinChannelRequest(entity))
+            #     self.logger.info(f"Вступили в чат @{link}!")
 
         except UserAlreadyParticipantError:
-            print("Вы уже состоите в этом чате.")
+            self.logger.info("Вы уже состоите в этом чате.")
+        except InviteHashExpiredError:
+            self.logger.error("Ссылка-приглашение истекла")
+            raise
+        except InviteHashInvalidError:
+            self.logger.error("Неверная ссылка-приглашение")
+            raise
+        except UsernameNotOccupiedError:
+            self.logger.error("Пользователь/чат с таким username не найден")
+            raise
+        except ChannelsTooMuchError:
+            self.logger.error("Вы вступили в слишком много каналов/групп")
+            raise
         except Exception as e:
             # Если нужно ждать одобрения
             if "successfully requested to join" in str(e):
